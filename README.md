@@ -1,11 +1,32 @@
 # vibe-test-agent
 
+<!-- 推上 GitHub 后，把下面徽章里的 USERNAME 换成你的 GitHub 用户名，CI 还没跑绿之前可以先删掉这一行 -->
+![ci](https://github.com/USERNAME/vibe-test-agent/actions/workflows/ci.yml/badge.svg)
+
 **AI 增强的接口自动化测试工具（自愈测试 MVP）**
 
 > 给它一个被测服务的接口契约，它读需求、生成 pytest 用例、执行、把失败分类，
 > 能安全修的自动修，不能修的出缺陷报告。
 
 不依赖任何 agent 编排框架，**纯 Python + pytest + requests + DeepSeek**。
+
+---
+
+## 30 秒上手（不用 API key）
+
+```bash
+pip install -r requirements.txt        # 只有 requests + pytest 两个依赖
+python demo/buggy_service.py           # 终端 1：起一个"故意带 Bug"的示例服务
+python -m selfheal.loop --target demo-buggy --n 3 --rounds 2   # 终端 2
+```
+
+跑完你会看到：**1 条通过 / 1 条系统缺陷 / 1 条契约不一致**，以及一份带缺陷清单的报告。
+示例服务里埋了两种坏法（5xx 与 200 但数据算错），工具对两者的反应不同 —— 这就是这个项目的核心。
+
+想测自己的项目？复制 `selfheal/configs/rag-backend.json` 改一改，**不需要改任何代码**。
+（真机生成用例需要 `DEEPSEEK_API_KEY`，见 `.env.example`）
+
+要求：**Python ≥ 3.10**（CI 在 3.10 / 3.13 上各跑一遍）。本地自检：`check.cmd`。
 
 ---
 
@@ -17,7 +38,7 @@
 2. **失败不会归类** —— 红了就去改脚本，结果把"接口真坏了"改成"测试通过"
 3. **重复犯同一个错** —— 这次改了，下次换个接口又犯一次
 
-这个工具依次对付这三件事：**RAG 读需求** → **五类失败分流** → **有界自愈 + 快照回滚**。
+这个工具依次对付这三件事：**RAG 读需求** → **六类失败分流** → **有界自愈 + 快照回滚**。
 
 ---
 
@@ -240,7 +261,8 @@ selfheal/
 ├── requirements_docs/ 需求文档（RAG 检索的语料）
 ├── generator.py     用例生成（模板头+四道校验+有界重试）✅
 ├── runner.py        执行 + 解析 junitxml    ✅
-├── triage.py        失败分流                ✅
+├── triage.py        失败分流（6 类 → 6 动作）✅
+├── advisor.py       AI 辅助归因（规则判不了才出场）✅
 ├── snapshot.py      快照 / 回滚点            ✅
 ├── loop.py          主循环（有界自愈）       ✅
 ├── report.py        Markdown 报告           ✅
@@ -250,15 +272,41 @@ web/
 ├── app.js           前端逻辑（选项式 API）
 ├── style.css        样式（单文件，无预处理器）
 └── vendor/          vue.global.prod.js（本地化，免 npm）
+demo/
+└── buggy_service.py 故意带 Bug 的示例服务（两种坏法，用于复现缺陷报告）
+scripts/
+└── check_contracts.py 契约自检（CI 与 check.cmd 共用）
+.github/workflows/ci.yml  CI：py3.10 / 3.13 双版本跑离线测试
 docs/
 ├── 00-零基础入门.md   ← 先读这个
 ├── 01-MVP架构设计.md
 ├── 02-工具调用Loop.md
-├── 03-理解检查题库.md  ← 30 道自测题（含参考答案）
+├── 03-理解检查题库.md  ← 30+ 道自测题（含参考答案）
 ├── 04-简历素材.md      ← 这个项目怎么写成简历条目
 └── samples/          样例报告（GitHub 上不跑也能看到输出长什么样）
-tests/                离线测试 + 手工基线（105 passed）
+tests/                离线测试 + 手工基线（127 passed）
 ```
+
+---
+
+## 本地自检 = CI 做的事
+
+```bash
+check.cmd          # Windows 一键
+# 或者三条分开跑：
+python -m compileall -q selfheal demo scripts
+python scripts/check_contracts.py
+python -m pytest -q
+```
+
+`check.cmd` 跑的就是 CI 里那三步 —— **本地绿了，CI 基本不会红**。
+（CI 在 GitHub 上还会额外跑一遍 Python 3.10，验证"不只在我这台 3.13 上能跑"。）
+
+---
+
+## 许可
+
+MIT，见 `LICENSE`。
 
 ---
 
