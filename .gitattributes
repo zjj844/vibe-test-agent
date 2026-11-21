@@ -1,0 +1,9 @@
+# 统一换行：GitHub 上以 LF 存储，Windows 检出时会按需转换
+* text=auto eol=lf
+
+# 这些是二进制/已构建产物，不要做行尾转换（否则文件会"被改坏"）
+*.png  binary
+*.jpg  binary
+*.ico  binary
+web/vendor/*.js   -text
+web/react/dist/*  -text

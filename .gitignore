@@ -1,0 +1,18 @@
+# 密钥（绝不提交）
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+pytest-cache-files-*/
+tests/_tmp_ws/
+
+# 运行产物
+.snapshots/
+reports/
+evals/generated/
+
+# 临时
+.tmp/
+.pylibs/

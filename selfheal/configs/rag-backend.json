@@ -1,0 +1,43 @@
+{
+  "name": "rag-backend",
+  "base_url": "http://127.0.0.1:8000",
+  "timeout": 30,
+  "health": { "id": "health" },
+  "endpoints": [
+    {
+      "id": "health",
+      "method": "GET",
+      "path": "/api/health",
+      "expect_status": 200,
+      "expect_fields": ["status", "doc_count", "chunk_count", "llm"],
+      "notes": "健康检查：服务活着就返回 status=ok，并用 doc_count/chunk_count 报告语料规模"
+    },
+    {
+      "id": "search",
+      "method": "POST",
+      "path": "/api/search",
+      "expect_status": 200,
+      "expect_fields": ["question", "hits", "latency_ms"],
+      "body": { "question": "libGL.so.1 缺失该用什么命令安装", "top_k": 3 },
+      "notes": "只检索不生成：返回 hits 数组（按 score 降序），用于单独验证检索层"
+    },
+    {
+      "id": "ask",
+      "method": "POST",
+      "path": "/api/ask",
+      "expect_status": 200,
+      "expect_fields": ["answer", "citations", "refused", "citation_valid"],
+      "body": { "question": "清华镜像装 torch 失败是什么原因", "top_k": 3 },
+      "notes": "核心接口：答案 + 出处。非拒答时必须 citation_valid=true；语料外问题必须 refused=true"
+    },
+    {
+      "id": "ask-empty",
+      "method": "POST",
+      "path": "/api/ask",
+      "expect_status": 400,
+      "expect_fields": ["error"],
+      "body": { "question": "   " },
+      "notes": "边界：空问题必须返回 400 + error 字段，而不是 200 或 500"
+    }
+  ]
+}
