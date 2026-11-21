@@ -57,7 +57,7 @@ DEFAULT_OUT_DIR = Path(__file__).resolve().parent.parent / "evals" / "generated"
 # ---------------------------------------------------------------------------
 TEMPLATE_HEADER = '''"""自动生成的测试用例（由 selfheal.generator 生成，请勿手改）。
 
-文件头（import / TARGET / api 助手）由模板固定，模型只填测试函数。
+文件头（import / TARGET / api 助手 / check_contract）由模板固定，模型只填测试函数。
 """
 
 import os
@@ -72,10 +72,27 @@ def api(endpoint_id):
     """按契约里的接口 id 发一次请求，返回 (endpoint, HttpResult)。
 
     测试里**不许自己拼 URL**——URL 只能来自 target 契约。
+    登录态（token）由 request_json 自动注入，用例不用管。
     """
     endpoint = TARGET.endpoint(endpoint_id)
     assert endpoint is not None, f"契约里没有接口 {{endpoint_id}}"
     return endpoint, request_json(TARGET, endpoint)
+
+
+def check_contract(endpoint, r):
+    """通用契约断言：状态码 → 必填字段 → 期望字段值。
+
+    为什么把它放进模板（而不是让模型每次自己写）：
+    这三条是**每条用例都要做的机械检查**，让模型重复写只会写漏、写错。
+    和"模板头由我们写死"是同一个道理：不变的交给代码，变化的交给模型。
+    """
+    assert r.status == endpoint.expect_status, (
+        f"状态码 {{r.status}} != 契约 {{endpoint.expect_status}}"
+    )
+    missing = r.missing_fields(endpoint.expect_fields)
+    assert not missing, f"响应缺字段 {{missing}}"
+    bad = r.json_mismatches(endpoint.expect_json)
+    assert not bad, f"响应字段值与契约不符：{{bad}}"
 
 '''
 
@@ -88,14 +105,17 @@ SYSTEM_PROMPT = """你是一名资深测试开发工程师，正在为一个 HTT
 {requirements}
 
 严格要求：
-1. 只输出 pytest 测试函数，**不要**输出 import、全局变量或 `api()` 助手——它们已经在文件头里了。
+1. 只输出 pytest 测试函数，**不要**输出 import、全局变量或 `api()` / `check_contract()` 助手——它们已经在文件头里了。
 2. 每个用例必须调用 `api("接口id")` 拿 `(endpoint, r)`，接口 id 只能取上面列出的那些。
 3. **禁止**在代码里出现 http:// 或 https:// 开头的 URL。
 4. 每个用例第一行写中文 docstring，注明它覆盖哪条需求（如 "FR-2：..."）。
-5. 断言要具体：先断言 `r.status == endpoint.expect_status`，再断言响应字段的内容，
+5. 每条用例开头先调 `check_contract(*api("接口id"))` 做契约断言，再补业务断言；
    不要只断言"没报错"或"非空"。
-6. 每个用例互相独立，能单独运行。
-7. 禁止写 `@pytest.mark.skip`、禁止 `try/except` 吞掉失败。
+6. 如果契约里给了"期望响应体"，必须断言这些字段值（用 `r.json_body`）。
+7. 标了「不带登录态」的接口是用来验证鉴权边界的：这类用例要断言它**被拒绝**
+   （通常是响应体里的 code 表示未登录），而不是断言它成功。
+8. 每个用例互相独立，能单独运行。
+9. 禁止写 `@pytest.mark.skip`、禁止 `try/except` 吞掉失败、禁止自己处理 token。
 
 请生成 {n} 个用例，覆盖不同的需求点（正常流程、边界、异常各占一些）。
 只输出一个 ```python 代码块。
@@ -122,14 +142,18 @@ class GenerationResult:
 # 提示词组装
 # ---------------------------------------------------------------------------
 def describe_endpoints(target: Target) -> str:
-    """把契约写成模型能读懂的清单（含 body 和业务含义）。"""
+    """把契约写成模型能读懂的清单（含 body / 查询参数 / 期望值 / 鉴权要求）。"""
     lines: list[str] = []
     for ep in target.endpoints:
         body = f" 请求体={ep.body}" if ep.body else ""
+        params = f" 查询参数={ep.params}" if ep.params else ""
         fields = ",".join(ep.expect_fields) if ep.expect_fields else "-"
+        expect_json = f" 期望响应体={ep.expect_json}" if ep.expect_json else ""
+        auth = " 不带登录态（用于验证鉴权边界）" if ep.no_auth else ""
         lines.append(
             f"- id={ep.id} | {ep.method} {ep.path} | 期望状态码={ep.expect_status}"
-            f" | 期望字段={fields}{body}\n  业务含义：{ep.notes or '（未填写）'}"
+            f" | 期望字段={fields}{body}{params}{expect_json}{auth}\n"
+            f"  业务含义：{ep.notes or '（未填写）'}"
         )
     return "\n".join(lines)
 

@@ -89,6 +89,10 @@ class Endpoint:
     expect_fields: tuple[str, ...] = ()   # 响应 JSON 里必须有的字段
     notes: str = ""              # 这个接口的业务含义（会塞进 LLM 的提示词）
     body: dict | None = None     # POST 请求体；GET 为 None
+    # ---- 下面三个是"测真实项目"时才需要的（Java CMS 逼出来的）----
+    params: dict | None = None               # 查询串参数，如 {"page": 1, "size": 10}
+    expect_json: dict | None = None          # 响应体里**指定字段的期望值**，如 {"code": 200}
+    no_auth: bool = False                    # 这个接口故意不带登录态（用于验证鉴权边界）
 
     # ---- 小工具：把"域名 + 路径"拼成完整网址 ----
     def url(self, base_url: str) -> str:
@@ -98,7 +102,35 @@ class Endpoint:
     def summary(self) -> str:
         fields = ",".join(self.expect_fields) if self.expect_fields else "-"
         body = "（有请求体）" if self.body else ""
-        return f"{self.method:<5} {self.path:<22} 期望 {self.expect_status}  字段 {fields}{body}"
+        extra = ""
+        if self.params:
+            extra += f" 查询={self.params}"
+        if self.expect_json:
+            extra += f" 期望体={self.expect_json}"
+        if self.no_auth:
+            extra += " [不带登录态]"
+        return f"{self.method:<5} {self.path:<22} 期望 {self.expect_status}  字段 {fields}{body}{extra}"
+
+
+@dataclass(frozen=True)
+class AuthConfig:
+    """登录态配置。
+
+    为什么需要它：真实的项目几乎都要求登录（Java CMS 用一个拦截器校验
+    `Authorization: Bearer <token>`）。如果工具不支持登录，
+    那它只能测"我自己写的那个不需要登录的 demo"—— 价值立刻缩水。
+
+    设计要点：**登录这件事对模型是透明的**。
+    生成用例的模型只会写 `api("me")`，它根本不知道 token 从哪来；
+    取 token、注入请求头这两步全在工具层完成（`http.request_json`）。
+    理由：这不属于"该测什么"，而属于"怎么把请求发出去"，不该让模型操心，
+    更不该让模型有机会把 token 硬编码进用例。
+    """
+
+    endpoint: str = "login"                 # 用哪个接口换 token（必须是 endpoints 里的 id）
+    token_path: str = "data.token"           # 从响应 JSON 里取 token 的点路径
+    header: str = "Authorization"            # 注入到哪个请求头
+    prefix: str = "Bearer "                  # 头的值前缀
 
 
 @dataclass(frozen=True)
@@ -115,6 +147,7 @@ class Target:
     health: Endpoint                       # 探活用的那个接口（也必须是 endpoints 之一）
     timeout: float = 10.0                  # 单次 HTTP 超时（秒）
     source_file: Path | None = None        # 从哪个 json 读出来的（便于报错定位）
+    auth: AuthConfig | None = None         # 需要登录的项目才有
 
     # ---- 按 id 找接口 ----
     def endpoint(self, endpoint_id: str) -> Endpoint | None:
@@ -188,11 +221,30 @@ def load_target(name_or_path: str | Path) -> Target:
             expect_fields=tuple(ep.get("expect_fields", ())),
             notes=ep.get("notes", ""),
             body=ep.get("body"),
+            params=ep.get("params"),
+            expect_json=ep.get("expect_json"),
+            no_auth=bool(ep.get("no_auth", False)),
         )
         for ep in data["endpoints"]
     )
     if not endpoints:
         raise TargetConfigError(f"{path.name} 里 endpoints 是空的，没东西可测")
+
+    # ---- 登录态（可选）：配了就得指向真实存在的接口 ----
+    auth: AuthConfig | None = None
+    auth_raw = data.get("auth")
+    if auth_raw:
+        auth = AuthConfig(
+            endpoint=auth_raw.get("endpoint", "login"),
+            token_path=auth_raw.get("token_path", "data.token"),
+            header=auth_raw.get("header", "Authorization"),
+            prefix=auth_raw.get("prefix", "Bearer "),
+        )
+        if not any(e.id == auth.endpoint for e in endpoints):
+            raise TargetConfigError(
+                f"{path.name} 的 auth.endpoint='{auth.endpoint}' 不在 endpoints 里；"
+                f"现有接口：{', '.join(e.id for e in endpoints)}"
+            )
 
     # ---- 探活接口：没显式写就用第一个接口 ----
     health_raw = data.get("health")
@@ -217,6 +269,7 @@ def load_target(name_or_path: str | Path) -> Target:
         health=health,
         timeout=float(data.get("timeout", 10.0)),
         source_file=path,
+        auth=auth,
     )
 
 

@@ -76,13 +76,21 @@ python -m pytest -q
 
 ## 换个被测项目 = 换个 json
 
+目前有两个真实被测项目，语言/框架/端口完全不同，**工具代码一行没改**：
+
+| 被测项目 | 技术栈 | base_url | 难点 |
+|---|---|---|---|
+| `rag-backend` | Python + Flask | `http://127.0.0.1:8000` | 接口慢（真的在调模型） |
+| `java-cms` | Java + Spring MVC(SSM) | `http://localhost:8080/cms` | **要登录**（拦截器校验 Bearer token）+ 统一响应体 `{code,msg,data}` |
+
 ```bash
-# 测 Java CMS（Spring）
-$env:SELFHEAL_TARGET="java-cms"
-python -m pytest tests/test_manual_baseline.py -v
+# 测 Java CMS（Spring），需先启动 CMS（mvn jetty:run）并导入 cms.sql
+python -m selfheal.loop --target java-cms --n 3 --rounds 2
+# 或者只探活
+python -m selfheal.targets --target java-cms
 ```
 
-契约格式（`selfheal/configs/*.json`）：
+契约格式（`selfheal/configs/*.json`），最简版：
 
 ```json
 {
@@ -96,6 +104,30 @@ python -m pytest tests/test_manual_baseline.py -v
   ]
 }
 ```
+
+测真实项目时还会用到这四样（`java-cms.json` 全用上了）：
+
+```json
+{
+  "auth": { "endpoint": "login", "token_path": "data.token",
+            "header": "Authorization", "prefix": "Bearer " },
+
+  "endpoints": [
+    { "id": "article-page", "method": "GET", "path": "/api/article/page",
+      "params": { "pageNum": 1, "pageSize": 10 },
+      "expect_json": { "code": 200 } },
+
+    { "id": "category-tree-anon", "method": "GET", "path": "/api/category/tree",
+      "no_auth": true, "expect_json": { "code": 401 } }
+  ]
+}
+```
+
+- `auth` —— 工具自动调登录接口换 token 并注入后续请求。**登录对模型透明**：模型写的用例里不出现任何 token。
+- `params` —— 查询串参数（真实项目的分页）。
+- `expect_json` —— 断言响应体里某字段的**值**。必须有它：Java 项目的拒绝方式是
+  `HTTP 200 + body.code=401`，只查"字段存在"根本测不出鉴权。
+- `no_auth` —— 这个接口**故意不带**登录态，用来验证"未登录必须被拒绝"这条安全边界。
 
 **工具不认识 Python 或 Java，只认识 HTTP 契约。**
 
@@ -134,8 +166,10 @@ docs/
 ├── 00-零基础入门.md   ← 先读这个
 ├── 01-MVP架构设计.md
 ├── 02-工具调用Loop.md
-└── 03-理解检查题库.md  ← 30 道自测题（含参考答案）
-tests/                离线测试 + 手工基线（78 passed）
+├── 03-理解检查题库.md  ← 30 道自测题（含参考答案）
+├── 04-简历素材.md      ← 这个项目怎么写成简历条目
+└── samples/          样例报告（GitHub 上不跑也能看到输出长什么样）
+tests/                离线测试 + 手工基线（87 passed）
 ```
 
 ---

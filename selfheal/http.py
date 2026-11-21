@@ -39,6 +39,67 @@ import requests
 
 from .targets import Endpoint, Target, make_session
 
+# ---------------------------------------------------------------------------
+# 登录态缓存：一个进程内每个 target 只登录一次
+# ---------------------------------------------------------------------------
+# 为什么缓存：登录接口要查库、算 token，每条用例都登一次既慢又脏。
+# 为什么用「模块级 dict」而不是挂在 Target 上：Target 是 frozen（不可变）的，
+# 而登录态是**运行期状态**，不是配置。配置和状态混在一起是 bug 的源头。
+_TOKEN_CACHE: dict[str, str] = {}
+
+
+def reset_token_cache() -> None:
+    """清空登录态（测试用，或在 token 过期后强制重新登录）。"""
+    _TOKEN_CACHE.clear()
+
+
+def _dig(obj, dotted: str):
+    """按 "data.token" 这种点路径从 JSON 里取值，取不到返回 None。"""
+    cur = obj
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def acquire_token(target: Target, session=None) -> str:
+    """用契约里的登录接口换一个 token。失败返回 ""（调用方决定怎么处理）。
+
+    注意这里**故意不抛异常**：登录失败是"可预期的情况"（账号密码改了、
+    seed 数据没导入、token 过期），应该体现成"用例失败 + 能看懂的报错"，
+    而不是让整个程序崩掉。
+    """
+    if target.auth is None:
+        return ""
+    login_ep = target.endpoint(target.auth.endpoint)
+    if login_ep is None:
+        return ""
+
+    result = request_json(target, login_ep, session=session)
+    token = _dig(result.json_body, target.auth.token_path)
+    if isinstance(token, str) and token:
+        _TOKEN_CACHE[target.name] = token
+        return token
+    _TOKEN_CACHE.pop(target.name, None)
+    return ""
+
+
+def _headers_for(target: Target, endpoint: Endpoint, session=None) -> dict[str, str]:
+    """算出这次请求要带的请求头（登录态注入点）。
+
+    三种情况：
+      1. 项目没配 auth          → 不带任何头
+      2. 接口标了 no_auth=True  → **故意不带**（用于验证"未登录应被拒绝"）
+      3. 其它                   → 带上 Bearer token（没有就先登录）
+    """
+    if target.auth is None or endpoint.id == target.auth.endpoint or endpoint.no_auth:
+        return {}
+    token = _TOKEN_CACHE.get(target.name) or acquire_token(target, session=session)
+    if not token:
+        return {}
+    return {target.auth.header: f"{target.auth.prefix}{token}"}
+
 
 @dataclass(frozen=True)
 class HttpResult:
@@ -63,13 +124,30 @@ class HttpResult:
         """契约要求有、但响应里缺的字段。"""
         return [f for f in expect_fields if f not in self.field_names()]
 
+    def json_mismatches(self, expect_json: dict | None) -> list[str]:
+        """契约要求"某字段等于某值"时的比对结果。
+
+        为什么有 `expect_fields` 还要这个：
+        Java CMS 的 401 是 **HTTP 200 + body 里 code=401**（拦截器直接写 JSON，
+        没改状态码）。只查"字段存在"是完全测不出鉴权的 ——
+        必须能断言 `body["code"] == 401`，否则"未登录应该被拒绝"这条用例形同虚设。
+        """
+        if not expect_json:
+            return []
+        body = self.json_body or {}
+        return [
+            f"{k}: 期望 {v!r}，实际 {body.get(k)!r}"
+            for k, v in expect_json.items()
+            if body.get(k) != v
+        ]
+
     def summary(self) -> str:
         if self.network_failed:
             return f"网络失败：{self.error}"
         return f"{self.status} · {self.latency_ms:.0f}ms · 字段={sorted(self.field_names())}"
 
 
-def request_json(target: Target, endpoint: Endpoint) -> HttpResult:
+def request_json(target: Target, endpoint: Endpoint, session=None) -> HttpResult:
     """按契约发一次请求。
 
     为什么参数是 (target, endpoint) 而不是一个完整 url：
@@ -78,16 +156,19 @@ def request_json(target: Target, endpoint: Endpoint) -> HttpResult:
     """
     url = endpoint.url(target.base_url)
     started = time.perf_counter()
-    session = make_session(url)
+    session = session or make_session(url)
+    headers = _headers_for(target, endpoint, session=session)
 
     try:
         resp = session.request(
             endpoint.method,
             url,
+            params=endpoint.params,      # 分页参数之类
             json=endpoint.body,
+            headers=headers or None,
             timeout=target.timeout,
         )
-    except requests.exceptions.ConnectionError as exc:
+    except requests.exceptions.ConnectionError:
         return HttpResult(
             status=None, json_body=None, text="",
             latency_ms=(time.perf_counter() - started) * 1000,
@@ -113,6 +194,11 @@ def request_json(target: Target, endpoint: Endpoint) -> HttpResult:
         body = parsed if isinstance(parsed, dict) else None
     except ValueError:      # 不是 JSON（比如返回 HTML 错误页）
         body = None
+
+    # token 失效（401）→ 丢掉缓存，下次调用会重新登录。
+    # 为什么在这里做：这是"业务码/状态码"和"登录态"唯一该耦合的地方。
+    if resp.status_code == 401 or (isinstance(body, dict) and body.get("code") == 401):
+        _TOKEN_CACHE.pop(target.name, None)
 
     return HttpResult(
         status=resp.status_code,

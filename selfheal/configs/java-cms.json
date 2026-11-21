@@ -1,0 +1,87 @@
+{
+  "name": "java-cms",
+  "_comment": "第二个被测项目：Java + Spring MVC 的 CMS。与 rag-backend 语言、框架、端口全都不一样，但工具代码一行不用改 —— 因为它只认 HTTP 契约。",
+  "base_url": "http://localhost:8080/cms",
+  "timeout": 20,
+
+  "_auth_comment": "CMS 用一个拦截器校验 Authorization: Bearer <token>。工具会自动调 login 换 token 并注入后续请求，模型写的用例里不出现任何 token。",
+  "auth": {
+    "endpoint": "login",
+    "token_path": "data.token",
+    "header": "Authorization",
+    "prefix": "Bearer "
+  },
+
+  "health": { "id": "auth-info" },
+
+  "endpoints": [
+    {
+      "id": "login",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "body": { "username": "admin", "password": "123456" },
+      "notes": "公开接口。登录成功返回 {code:200, msg:'登录成功', data:{token,user}}。种子账号 admin/editor/viewer，密码均为 123456。"
+    },
+    {
+      "id": "auth-info",
+      "method": "GET",
+      "path": "/api/auth/info",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg"],
+      "expect_json": { "code": 401 },
+      "no_auth": true,
+      "notes": "鉴权边界：不带 token 时必须被拒绝。注意 CMS 的拒绝方式是 HTTP 200 + body.code=401（拦截器直接写 JSON，没改状态码）—— 所以只断言状态码是测不出来的，必须断言 code。"
+    },
+    {
+      "id": "me",
+      "method": "GET",
+      "path": "/api/auth/info",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "notes": "带 token 取当前用户信息，data 里含 userId/username/realName/roles/perms。工具自动注入登录态。"
+    },
+    {
+      "id": "category-tree",
+      "method": "GET",
+      "path": "/api/category/tree",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "notes": "分类树（多级）。登录即可查看，不需要额外权限。data 应为数组。"
+    },
+    {
+      "id": "category-tree-anon",
+      "method": "GET",
+      "path": "/api/category/tree",
+      "expect_status": 200,
+      "expect_fields": ["code"],
+      "expect_json": { "code": 401 },
+      "no_auth": true,
+      "notes": "同一个接口、不带登录态，用于验证『未登录必须被拒绝』。与 category-tree 成对出现，是一条真正的安全回归用例。"
+    },
+    {
+      "id": "article-page",
+      "method": "GET",
+      "path": "/api/article/page",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "params": { "pageNum": 1, "pageSize": 10 },
+      "notes": "文章分页查询，查询参数是 pageNum/pageSize（不是 page/size）。返回 data 里应含分页结构（列表 + 总数）。"
+    },
+    {
+      "id": "article-detail-anon",
+      "method": "GET",
+      "path": "/api/article/1",
+      "expect_status": 200,
+      "expect_fields": ["code"],
+      "expect_json": { "code": 401 },
+      "no_auth": true,
+      "notes": "文章详情在不带登录态时也必须被拒绝。带 token 访问会让浏览量 +1，所以默认不在回归里跑它。"
+    }
+  ]
+}
