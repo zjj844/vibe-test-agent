@@ -161,6 +161,21 @@ def _feedback_from(t: triage.TriageReport, run: runner.RunResult) -> str:
 # ---------------------------------------------------------------------------
 # 主循环
 # ---------------------------------------------------------------------------
+def _notify(on_step: Any, idx: int, stage: str) -> None:
+    """调用进度回调。
+
+    为什么单独包一层并 try/except：
+    回调是**外部代码**（可能是前端、可能是测试）。
+    它抛异常不能影响主流程 —— 界面挂了不该让一次测试运行跟着挂。
+    """
+    if on_step is None:
+        return
+    try:
+        on_step(idx, stage)
+    except Exception:                                  # noqa: BLE001
+        pass
+
+
 def run_cycle(
     target_name: str,
     n_cases: int = 3,
@@ -169,6 +184,7 @@ def run_cycle(
     gen_dir: Path | str = GENERATED_DIR,
     report_dir: Path | str = report.REPORT_DIR,
     write_report: bool = True,
+    on_step: Any = None,
 ) -> CycleResult:
     """跑一次完整循环。
 
@@ -178,6 +194,10 @@ def run_cycle(
       max_rounds   —— 轮数上限（**有界**的核心）
       use_critic   —— 是否跑自评（关掉可省一次模型调用，调试时常用）
       write_report —— 是否写出 Markdown 报告
+      on_step      —— 可选进度回调 `on_step(round_idx, stage)`。
+                      给前端报告台用的：有了它，界面才能显示"现在走到第几步"，
+                      而不是干等 40 秒。**编排逻辑本身一行没变**——
+                      加回调不改变流程，这是"编排在代码里"的好处之一。
     """
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     cycle = CycleResult(target_name=target_name, started_at=started, max_rounds=max_rounds)
@@ -211,6 +231,7 @@ def run_cycle(
         # 实测踩过：只在"继续下一轮"的分支里记时间，结果成功那一轮显示"总耗时 0.0s"。
         try:
             # ---------- 第 1 步：探活（不可达就别玩了）----------
+            _notify(on_step, idx, "探活")
             r.probe = targets.probe(target)
             if not r.probe.ok:
                 r.note = f"服务不可达：{r.probe.detail}"
@@ -219,9 +240,11 @@ def run_cycle(
                 break
 
             # ---------- 第 2 步：读需求 ----------
+            _notify(on_step, idx, "检索需求")
             r.requirements = knowledge.search(query, top_k=3)
 
             # ---------- 第 3 步：写代码（唯一"创作"步骤）----------
+            _notify(on_step, idx, "生成用例")
             try:
                 r.generation = generator.generate(
                     target, r.requirements, n_cases=n_cases, feedback=feedback
@@ -245,12 +268,14 @@ def run_cycle(
 
             # ---------- 第 4 步：自评（rubric 打分，仅供参考，不阻断）----------
             if use_critic:
+                _notify(on_step, idx, "自评打分")
                 try:
                     r.score = critic.score(r.generation.code, samples=2)
                 except Exception as exc:               # noqa: BLE001 评分失败不影响主流程
                     cycle.notes.append(f"第 {idx} 轮自评失败（已忽略）：{exc}")
 
             # ---------- 第 5 步：落盘 ----------
+            _notify(on_step, idx, "落盘")
             try:
                 r.generated_file = generator.save(
                     r.generation, target, gen_path, tag=f"r{idx}"
@@ -262,6 +287,7 @@ def run_cycle(
                 break
 
             # ---------- 第 6 步：快照（留回滚点）----------
+            _notify(on_step, idx, "快照")
             try:
                 r.snap = snapshot.take(
                     [r.generated_file],
@@ -272,6 +298,7 @@ def run_cycle(
                 cycle.notes.append(f"第 {idx} 轮快照失败（已忽略）：{exc}")
 
             # ---------- 第 7 步：跑 ----------
+            _notify(on_step, idx, "执行用例")
             r.run = runner.run_tests(r.generated_file, timeout=900, report_dir=report_dir)
             if r.run.error:
                 r.note = f"执行层失败：{r.run.error}"
@@ -280,9 +307,11 @@ def run_cycle(
                 break
 
             # ---------- 第 8 步：分流 ----------
+            _notify(on_step, idx, "失败分流")
             r.triage = triage.classify_run(r.run)
 
             # ---------- 第 9 步：决定 ----------
+            _notify(on_step, idx, "决策")
             if r.run.all_green:
                 r.note = f"全部通过（{r.run.passed} 条），收工"
                 cycle.status = SUCCESS

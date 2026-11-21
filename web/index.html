@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>selfheal · 本地报告台</title>
+  <!-- data: 空的 favicon：避免浏览器自动请求 /favicon.ico 时打一行 404 日志 -->
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/web/style.css" />
+  <!-- Vue 3 全局构建（本地 vendor，零构建、无 npm） -->
+  <script src="/web/vendor/vue.global.prod.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- ================= 顶栏：跑一次 ================= -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◇</span>
+        <div>
+          <h1>selfheal 报告台</h1>
+          <p class="sub">本地只读视图 · 不是平台（无调度 / 无账号 / 无多租户）</p>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label>
+          被测项目
+          <select v-model="form.target" :disabled="running">
+            <option v-for="t in targets" :key="t.name" :value="t.name">{{ t.name }}</option>
+          </select>
+        </label>
+        <label>
+          用例数
+          <input type="number" min="1" max="5" v-model.number="form.n_cases" :disabled="running" />
+        </label>
+        <label>
+          轮数上限
+          <input type="number" min="1" max="3" v-model.number="form.max_rounds" :disabled="running" />
+        </label>
+        <button class="run" @click="runOnce" :disabled="running || !form.target">
+          {{ running ? '运行中…' : '▶ 运行一次' }}
+        </button>
+      </div>
+    </header>
+
+    <!-- ================= 运行进度 ================= -->
+    <section v-if="running || runMessage" class="progress" :class="runState.status">
+      <div class="progress-head">
+        <strong>{{ running ? '正在运行 · ' + runState.target : labelOf(runState.status) }}</strong>
+        <span class="muted">{{ runState.started_at }} → {{ runState.finished_at || '…' }}</span>
+      </div>
+      <div class="steps">
+        <span v-for="(s, i) in runState.steps" :key="i" class="step">
+          R{{ s.round }}·{{ s.stage }}
+        </span>
+        <span v-if="running" class="step pending">…</span>
+      </div>
+      <p v-if="runState.message" class="progress-msg">{{ runState.message }}</p>
+    </section>
+
+    <!-- ================= 主体：列表 + 详情 ================= -->
+    <main class="layout">
+      <aside class="list-pane">
+        <div class="pane-head">
+          <h2>历史报告 <span class="count">{{ reports.length }}</span></h2>
+          <button class="ghost" @click="loadReports">刷新</button>
+        </div>
+
+        <p v-if="error" class="error">{{ error }}</p>
+
+        <div v-if="!reports.length" class="empty">
+          还没有报告。点右上角「运行一次」，或先跑：<code>python -m selfheal.loop --target rag-backend</code>
+        </div>
+
+        <button
+          v-for="r in reports"
+          :key="r.name"
+          class="card"
+          :class="{ active: current && current.name === r.name }"
+          @click="openReport(r.name)"
+        >
+          <div class="card-top">
+            <strong>{{ r.target }}</strong>
+            <span class="badge" :class="badgeClass(r.conclusion)">{{ shortConclusion(r.conclusion) }}</span>
+          </div>
+          <div class="metrics">
+            <span :class="r.pass_rate >= 100 ? 'ok' : 'warn'">{{ r.pass_rate }}%</span>
+            <span class="muted">{{ r.passed }}/{{ r.total }} 通过</span>
+            <span v-if="r.defects" class="defect">缺陷 {{ r.defects }}</span>
+            <span class="muted">R{{ r.rounds }}/{{ r.rounds_limit }}</span>
+          </div>
+          <div class="card-foot">
+            <span class="muted">{{ r.mtime }}</span>
+            <span class="muted">{{ r.duration_s }}s</span>
+          </div>
+        </button>
+      </aside>
+
+      <section class="detail-pane">
+        <div v-if="!current" class="empty big">
+          左侧选择一份报告查看详情
+        </div>
+        <article v-else class="report" v-html="current.html"></article>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>selfheal · 探→读→写→校验→评→快照→跑→分→定→报</span>
+      <span class="muted">报告目录：reports/ · 接口：/api/reports · /api/report · /api/run</span>
+    </footer>
+  </div>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>

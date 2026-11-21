@@ -19,6 +19,7 @@
     ✅ snapshot.py  快照 / 回滚点
     ✅ report.py    Markdown 报告
     ✅ loop.py      主循环（有界自愈）
+    ✅ server.py    本地报告台（stdlib HTTP + web/ 下的 Vue 3 零构建前端）
 
 本包每次只交付一个模块，绝不一次性甩全量。
 """
