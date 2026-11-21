@@ -125,15 +125,17 @@ selfheal/
 ├── configs/         被测项目契约（一个项目一个 json）
 ├── requirements_docs/ 需求文档（RAG 检索的语料）
 ├── generator.py     用例生成（模板头+四道校验+有界重试）✅
-├── runner.py        执行 + 解析 junitxml    ⬜
-├── triage.py        失败分流                ⬜
-├── snapshot.py      快照回滚                ⬜
-├── loop.py          主循环                  ⬜
-└── report.py        报告                    ⬜
+├── runner.py        执行 + 解析 junitxml    ✅
+├── triage.py        失败分流                ✅
+├── snapshot.py      快照 / 回滚点            ✅
+├── loop.py          主循环（有界自愈）       ✅
+└── report.py        Markdown 报告           ✅
 docs/
 ├── 00-零基础入门.md   ← 先读这个
-└── 01-MVP架构设计.md
-tests/                离线测试 + 手工基线
+├── 01-MVP架构设计.md
+├── 02-工具调用Loop.md
+└── 03-理解检查题库.md  ← 30 道自测题（含参考答案）
+tests/                离线测试 + 手工基线（78 passed）
 ```
 
 ---
@@ -142,7 +144,7 @@ tests/                离线测试 + 手工基线
 
 Playwright / UI 自动化 · CrewAI · Langfuse 追踪 · 多 Agent 编排 · Web 看板 · 自动修系统 Bug
 
-这些属于"完整平台"的能力，本项目是**两晚能跑通的 MVP**。完整愿景见 `docs/01-MVP架构设计.md`。
+这些属于"完整平台"的能力，本项目是**分模块小步交付的 MVP**（每晚一个模块，模块各自可跑、可测）。完整愿景见 `docs/01-MVP架构设计.md`。
 
 ---
 
