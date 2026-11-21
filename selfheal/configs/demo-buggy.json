@@ -1,0 +1,30 @@
+{
+  "name": "demo-buggy",
+  "_comment": "示例被测服务（故意带 Bug），用来复现一份真实的缺陷报告。契约按需求文档的\"正确答案\"写（订单不存在应返回 404），而服务实际返回 500 —— 这正是分流模块要识别的场景。",
+  "base_url": "http://127.0.0.1:8090",
+  "timeout": 10,
+  "requirements_dir": "selfheal/requirements_docs/demo-buggy",
+
+  "health": { "id": "items" },
+
+  "endpoints": [
+    {
+      "id": "items",
+      "method": "GET",
+      "path": "/api/items",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "notes": "商品列表。这个接口是正常的，用来证明工具不会\"一律报错\"。"
+    },
+    {
+      "id": "order-detail",
+      "method": "GET",
+      "path": "/api/orders/42",
+      "expect_status": 404,
+      "expect_fields": ["code", "msg"],
+      "expect_json": { "code": 404 },
+      "notes": "订单详情。**这个接口是坏的**：42 号订单不存在，契约要求返回 404 + code=404，服务实际直接 500（查不到就崩）。这是服务端缺陷，不是测试写错。"
+    }
+  ]
+}

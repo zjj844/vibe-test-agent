@@ -74,6 +74,41 @@ python -m pytest -q
 
 ---
 
+## 复现一份真实的缺陷报告（约 1 分钟）
+
+「系统 Bug 不许改测试」是这个项目最重要的一条原则。为了让人能亲眼看到它，
+仓库里内置了一个**故意带 Bug 的示例服务**（`demo/buggy_service.py`）：
+
+```bash
+# 终端 1：起示例服务（42 号订单不存在时直接 500）
+python demo/buggy_service.py
+
+# 终端 2：让工具去测它
+python -m selfheal.loop --target demo-buggy --n 2 --rounds 2
+```
+
+预期输出：
+
+```
+  跑   通过 1 / 共 2（1.0s）
+  分   共 1 条失败：系统Bug 1。其中 1 条是**服务端缺陷**，不许改测试。
+  定   发现 1 条系统缺陷 → 不改测试，出报告
+结果：⚠️ defect
+  ✅ test_items_list_returns_array_with_required_fields            passed
+  ❌ test_order_detail_missing_order_returns_404_not_500           failed
+
+缺陷清单（工具不改测试，需人工跟进）：
+  · …::test_order_detail_missing_order_returns_404_not_500｜接口返回 5xx：这是服务端缺陷…
+```
+
+注意三件事：
+
+1. **通过的用例照常通过** —— 工具不会"一律报错"来刷存在感
+2. **失败的那条立即停手**，没有第二轮重写：改测试让 500 变绿等于把缺陷藏起来
+3. 报告结论是 `⚠️ 发现服务端缺陷（已出缺陷清单，未改测试）`，样例见 `docs/samples/REPORT-demo-buggy-defect.md`
+
+---
+
 ## 本地报告台（可选界面）
 
 ```bash
