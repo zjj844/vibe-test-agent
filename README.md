@@ -31,7 +31,7 @@
 |---|---|---|
 | 探 | 探活，服务没起就停手 | `targets.py` |
 | 读 | 读契约 + 从需求文档检索"该测什么" | `targets.py` + `kb.py` |
-| 写 | 生成 pytest 用例 | `generator.py`（待实现） |
+| 写 | 生成 pytest 用例 | `generator.py` ✅ |
 | 评 | 按 rubric 自评，2 次取中位 | `critic.py` |
 | 跑 | 执行 pytest，解析 junitxml | `runner.py`（待实现） |
 | 分 | 失败分 5 类 | `triage.py`（待实现） |
@@ -113,7 +113,7 @@ selfheal/
 ├── retrieval/       精简检索组件（从 RAG 项目移植）
 ├── configs/         被测项目契约（一个项目一个 json）
 ├── requirements_docs/ 需求文档（RAG 检索的语料）
-├── generator.py     用例生成                ⬜
+├── generator.py     用例生成（模板头+四道校验+有界重试）✅
 ├── runner.py        执行 + 解析 junitxml    ⬜
 ├── triage.py        失败分流                ⬜
 ├── snapshot.py      快照回滚                ⬜
