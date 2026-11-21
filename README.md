@@ -83,6 +83,13 @@ python -m pytest -q
 | `rag-backend` | Python + Flask | `http://127.0.0.1:8000` | 接口慢（真的在调模型） |
 | `java-cms` | Java + Spring MVC(SSM) | `http://localhost:8080/cms` | **要登录**（拦截器校验 Bearer token）+ 统一响应体 `{code,msg,data}` |
 
+两个项目都真跑过，报告与生成的用例在 `docs/samples/`：
+
+| 被测项目 | 用例 | 自评 | 亮点 |
+|---|---|---|---|
+| `rag-backend` | 3/3 通过 | 3.90/5 | 覆盖"空问题必须 400"的边界 |
+| `java-cms` | 3/3 通过 | 4.20/5 | 一次生成就写出"未登录取分类树必须 `code=401`"的安全用例 |
+
 ```bash
 # 测 Java CMS（Spring），需先启动 CMS（mvn jetty:run）并导入 cms.sql
 python -m selfheal.loop --target java-cms --n 3 --rounds 2
@@ -169,7 +176,7 @@ docs/
 ├── 03-理解检查题库.md  ← 30 道自测题（含参考答案）
 ├── 04-简历素材.md      ← 这个项目怎么写成简历条目
 └── samples/          样例报告（GitHub 上不跑也能看到输出长什么样）
-tests/                离线测试 + 手工基线（87 passed）
+tests/                离线测试 + 手工基线（88 passed）
 ```
 
 ---

@@ -4,6 +4,9 @@
   "base_url": "http://localhost:8080/cms",
   "timeout": 20,
 
+  "_requirements_comment": "这个项目自己的需求文档（相对仓库根）。不写就会去检索默认目录里 RAG 项目的需求——第一次跑就喂错了语料。",
+  "requirements_dir": "selfheal/requirements_docs/java-cms",
+
   "_auth_comment": "CMS 用一个拦截器校验 Authorization: Bearer <token>。工具会自动调 login 换 token 并注入后续请求，模型写的用例里不出现任何 token。",
   "auth": {
     "endpoint": "login",

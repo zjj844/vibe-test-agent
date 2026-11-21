@@ -188,7 +188,11 @@ def run_cycle(
     )
 
     # ---- 先建一次知识库（需求文档不常变，一次循环建一次就够）----
-    knowledge = kb.RequirementKB()
+    # 每个被测项目有自己的需求文档（契约里 requirements_dir 指定）。
+    # 不指定就用默认那份——但那样检索到的是"别人的需求"，等于白读。
+    knowledge = kb.RequirementKB(
+        docs_dir=target.requirements_dir
+    ) if target.requirements_dir else kb.RequirementKB()
     query = _requirement_query(target)
     cycle.notes.append(
         f"需求库：{knowledge.doc_count} 篇 / {knowledge.chunk_count} 块；检索词 {len(query)} 字符"

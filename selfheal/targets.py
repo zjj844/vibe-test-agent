@@ -44,6 +44,9 @@ import requests
 # 配置文件放在这个目录下：一个被测项目 = 一个 json 文件
 CONFIG_DIR = Path(__file__).resolve().parent / "configs"
 
+# 仓库根目录（用来解析契约里写的相对路径，比如 requirements_dir）
+ROOT = Path(__file__).resolve().parent.parent
+
 # 本机地址清单：对这些地址发请求时**必须绕过代理**
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
 
@@ -148,6 +151,7 @@ class Target:
     timeout: float = 10.0                  # 单次 HTTP 超时（秒）
     source_file: Path | None = None        # 从哪个 json 读出来的（便于报错定位）
     auth: AuthConfig | None = None         # 需要登录的项目才有
+    requirements_dir: Path | None = None   # 这个项目自己的需求文档目录（不填就用默认的）
 
     # ---- 按 id 找接口 ----
     def endpoint(self, endpoint_id: str) -> Endpoint | None:
@@ -181,6 +185,30 @@ class ProbeResult:
 # ---------------------------------------------------------------------------
 class TargetConfigError(Exception):
     """配置文件写错时抛这个（而不是让 KeyError 到处飞）。"""
+
+
+def _resolve_requirements_dir(raw: str | None, config_path: Path) -> Path | None:
+    """解析契约里的 `requirements_dir`。
+
+    为什么要这个字段：我第一次拿这个工具去测 Java CMS 时，检索到的需求片段
+    还是 RAG 项目那三篇（`REQ-001 问答页面`…）——**喂错了语料**。
+    契约是主要依据，所以用例照样能跑，但"读需求"这一步等于白做。
+    一个被测项目有自己的需求文档，就该能指到自己的目录。
+
+    规则：相对路径按**仓库根**解析（`requirements_dir` 里写
+    `selfheal/requirements_docs/java-cms` 这样的路径，换机器也不会错）；
+    绝对路径直接用。目录不存在时给出明确报错，而不是悄悄检索到 0 条。
+    """
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.is_dir():
+        raise TargetConfigError(
+            f"{config_path.name} 里的 requirements_dir 不存在：{path}"
+        )
+    return path
 
 
 def load_target(name_or_path: str | Path) -> Target:
@@ -270,6 +298,7 @@ def load_target(name_or_path: str | Path) -> Target:
         timeout=float(data.get("timeout", 10.0)),
         source_file=path,
         auth=auth,
+        requirements_dir=_resolve_requirements_dir(data.get("requirements_dir"), path),
     )
 
 

@@ -105,6 +105,25 @@ def test_java_cms_config_parses_auth_and_new_fields():
     page = target.endpoint("article-page")
     assert page.params == {"pageNum": 1, "pageSize": 10}
 
+    # 每个被测项目要有**自己的**需求文档，否则检索到的是别人的需求
+    assert target.requirements_dir is not None
+    assert target.requirements_dir.name == "java-cms"
+    assert target.requirements_dir.is_dir()
+
+
+def test_missing_requirements_dir_fails_loudly(ws_tmp):
+    """指向不存在的需求目录 → 报错，而不是悄悄检索到 0 条。"""
+    bad = ws_tmp / "bad2.json"
+    bad.write_text(json.dumps({
+        "name": "x", "base_url": "http://127.0.0.1:9",
+        "requirements_dir": "selfheal/requirements_docs/nope",
+        "endpoints": [{"id": "a", "method": "GET", "path": "/a"}],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(TargetConfigError) as exc:
+        targets.load_target(bad)
+    assert "requirements_dir" in str(exc.value)
+
 
 def test_auth_endpoint_must_exist(monkeypatch, ws_tmp):
     """auth 指向不存在的接口 → 早失败，并说清有哪些接口可用。"""
