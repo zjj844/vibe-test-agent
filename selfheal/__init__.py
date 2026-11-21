@@ -13,9 +13,10 @@
     ✅ http.py      真实 HTTP 请求层
     ✅ kb.py        需求知识库（层级分块 + 检索）
     ✅ critic.py    用例自评（rubric 5 维，多次采样取中位）
-    ✅ generator.py 用例生成（模板头 + 三道静态检查 + 有界重试）
+    ✅ generator.py 用例生成（模板头 + 四道静态检查 + 有界重试）
     ✅ runner.py    执行层（pytest + junitxml 解析）
-    ✅ triage.py    失败分流（5 类失败 → 5 种动作）
+    ✅ triage.py    失败分流（6 类失败 → 6 种动作，含"挂起交给人"）
+    ✅ advisor.py   AI 辅助归因（只在规则判不了时出场，无动作权限）
     ✅ snapshot.py  快照 / 回滚点
     ✅ report.py    Markdown 报告
     ✅ loop.py      主循环（有界自愈）

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from selfheal import critic, loop, runner, snapshot, targets
+from selfheal import advisor, critic, loop, runner, snapshot, targets
 from selfheal.generator import GenerationResult
 from selfheal.triage import Action, FailureKind, TriageReport, Verdict
 
@@ -129,6 +129,18 @@ class Script:
 
         monkeypatch.setattr(loop.runner, "run_tests", self._run_tests)
         monkeypatch.setattr(loop.triage, "classify_run", self._classify)
+
+        # advisor 会真的调模型：测试里必须替换掉，否则离线测试会联网。
+        self.advice_calls = 0
+
+        def fake_advise(case, verdict):
+            self.advice_calls += 1
+            return advisor.Advice(
+                nodeid=case.nodeid, responsibility="服务端缺陷",
+                reason="契约要求 798，服务返回 399", suggestion="按缺陷提单", ok=True,
+            )
+
+        monkeypatch.setattr(loop.advisor, "advise", fake_advise)
         return self
 
     # ---- 被替换掉的真函数 ----
@@ -281,6 +293,50 @@ def test_snapshot_failure_is_degraded_not_fatal(monkeypatch, ws_tmp):
     assert cycle.status == loop.SUCCESS
     assert cycle.rounds[0].snap is None
     assert any("快照失败" in n for n in cycle.notes)
+
+
+# ---------------------------------------------------------------------------
+# 剧本 10：HTTP 200 但数据不符（契约与实现不一致）→ 挂起，不许重写
+# ---------------------------------------------------------------------------
+def test_contract_mismatch_is_held_not_rewritten(monkeypatch, ws_tmp):
+    """这是本项目最危险的缺口：判成"可修"就会去改断言，等于藏缺陷。
+
+    HOLD 的动作是：不改测试、也不重新生成，直接交给人确认。
+    """
+    bad = Step(
+        _run([_case("test_order_total", "failed",
+                    "响应字段值与契约不符：['data.total: 期望 798，实际 399']")]),
+        (_v("test_order_total", FailureKind.CONTRACT_MISMATCH, Action.HOLD,
+            "HTTP 通了但数据不对"),),
+    )
+    script = Script([bad]).install(monkeypatch, ws_tmp)
+    cycle = loop.run_cycle("fake-app", max_rounds=2, use_critic=False, write_report=False)
+
+    assert cycle.status == loop.NEEDS_HUMAN
+    assert len(cycle.rounds) == 1
+    assert script.gen_calls == 1              # 没有第二轮重写
+    assert script.advice_calls == 1           # 但问了模型"这是谁的问题"
+    assert cycle.rounds[0].advices[0].responsibility == "服务端缺陷"
+    assert cycle.final_triage.held            # 挂在"需人工确认"里
+    assert "挂起" in cycle.rounds[0].note or "交给人" in cycle.rounds[0].note
+
+
+def test_defect_wins_over_held(monkeypatch, ws_tmp):
+    """同时有系统缺陷和疑似契约问题时，结论按更严重的算（defect）。"""
+    bad = Step(
+        _run([_case("t_500", "failed", "assert 500 == 200"),
+              _case("t_total", "failed", "响应字段值与契约不符")]),
+        (
+            _v("t_500", FailureKind.SYSTEM_BUG, Action.REPORT_DEFECT, "5xx"),
+            _v("t_total", FailureKind.CONTRACT_MISMATCH, Action.HOLD, "值不符"),
+        ),
+    )
+    Script([bad]).install(monkeypatch, ws_tmp)
+    cycle = loop.run_cycle("fake-app", max_rounds=2, use_critic=False, write_report=False)
+
+    assert cycle.status == loop.DEFECT
+    assert len(cycle.final_triage.defects) == 1
+    assert len(cycle.final_triage.held) == 1
 
 
 # ---------------------------------------------------------------------------

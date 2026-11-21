@@ -25,6 +25,15 @@
       "expect_fields": ["code", "msg"],
       "expect_json": { "code": 404 },
       "notes": "订单详情。**这个接口是坏的**：42 号订单不存在，契约要求返回 404 + code=404，服务实际直接 500（查不到就崩）。这是服务端缺陷，不是测试写错。"
+    },
+    {
+      "id": "order-total",
+      "method": "GET",
+      "path": "/api/orders/41/total",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200, "data.total": 798 },
+      "notes": "订单总价。**这个接口也是坏的，但状态码是 200**：41 号订单是 2 件单价 399 的商品，总价应为 798，服务返回了 399（忘了乘数量）。只查状态码查不出来，必须比期望值 —— 用来验证\"契约与实现不一致\"会被挂起而不是被改测试。"
     }
   ]
 }

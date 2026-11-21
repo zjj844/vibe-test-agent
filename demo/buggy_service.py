@@ -58,7 +58,7 @@ def list_items():
 
 @app.get("/api/orders/<int:order_id>")
 def order_detail(order_id: int):
-    """**带 Bug 的接口**。
+    """**带 Bug 的接口（一）**：500。
 
     `_ORDERS[order_id]` 在 order_id 不存在时抛 KeyError，Flask 兜底成 500。
     正确写法应该是：查不到就返回 404 + code=404（契约里也这么要求）。
@@ -66,6 +66,28 @@ def order_detail(order_id: int):
     """
     order = _ORDERS[order_id]          # ← Bug 在这里：没有 get / 没有存在性判断
     return jsonify({"code": 200, "msg": "操作成功", "data": order})
+
+
+@app.get("/api/orders/<int:order_id>/total")
+def order_total(order_id: int):
+    """**带 Bug 的接口（二）**：HTTP 200，但数据算错。
+
+    这笔订单是 2 件单价 399 的商品，总价应当是 798；这里直接返回了单价 399
+    （真实世界的经典 bug：忘记乘数量）。**状态码是 200**，只查状态码和字段名
+    完全发现不了 —— 必须靠契约里的期望值。
+
+    这个接口专门用来验证"契约与实现不一致"这条分流：工具应当**挂起并交给人**，
+    而不是把 `total == 798` 的断言改宽去迁就 399。
+    """
+    order = _ORDERS[order_id]
+    price = next(i["price"] for i in _ITEMS if i["id"] == order["item_id"])
+    return jsonify(
+        {
+            "code": 200,
+            "msg": "操作成功",
+            "data": {"order_id": order_id, "total": price},   # ← Bug：忘乘 qty
+        }
+    )
 
 
 if __name__ == "__main__":

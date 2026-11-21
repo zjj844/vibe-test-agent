@@ -55,6 +55,7 @@ class FailureKind(str, Enum):
 
     SERVER_UNREACHABLE = "服务不可达"
     SYSTEM_BUG = "系统Bug"
+    CONTRACT_MISMATCH = "契约与实现不一致"
     GENERATED_CODE = "生成代码问题"
     ASSERTION = "断言问题"
     SCRIPT = "脚本问题"
@@ -66,6 +67,7 @@ class Action(str, Enum):
 
     STOP = "stop"                    # 立刻停手，什么都不改
     REPORT_DEFECT = "report_defect"  # 写缺陷报告，不改测试
+    HOLD = "hold"                    # 挂起：不改也不重写，交给人确认
     REGENERATE = "regenerate"        # 重新生成这段用例
     FIX = "fix"                      # 可以改测试
     MANUAL = "manual"                # 规则判不了，交给人
@@ -95,7 +97,26 @@ RULES: tuple[tuple[str, FailureKind, Action, str], ...] = (
         Action.REPORT_DEFECT,
         "接口返回 5xx：这是服务端缺陷，**不许改测试**，写缺陷报告交给人",
     ),
-    # ③ 生成代码问题：代码本身有硬伤（凭空发明 API / 语法错 / 名字写错）
+    # ③ 契约与实现不一致：HTTP 200，但响应体的值不符合契约
+    #
+    # 为什么单列一类、而且是 HOLD 而不是 FIX —— 这是本项目最容易被忽略的坑：
+    # 之前这条会落到 ⑤/④（断言问题）→ 动作 FIX → 第 2 轮"重写"，于是模型很可能
+    # 把断言改宽（比如把 `== 200` 改成 `in (200, 999)`）让它变绿。
+    # 那就等于"把缺陷改成预期行为"，和本项目的根本原则直接冲突。
+    #
+    # 而这种情况**恰恰无法自动判定责任**：
+    #   · 可能服务错了（该返回 2，返回了 0）
+    #   · 可能契约写错了（业务规则本来就该是 0）
+    #   · 可能用例写错了（比较的字段不是一个东西）
+    # 三者只有人能分清。所以动作是 HOLD：不改、也不重写，挂起等人。
+    (
+        r"响应字段值与契约不符|响应缺字段|字段值与契约|missing_fields|"
+        r"契约里没有接口",
+        FailureKind.CONTRACT_MISMATCH,
+        Action.HOLD,
+        "HTTP 通了但数据不对：可能是服务错、契约错或用例错，三者只有人能分清 → 不改测试，交给人确认",
+    ),
+    # ④ 生成代码问题：代码本身有硬伤（凭空发明 API / 语法错 / 名字写错）
     (
         r"AttributeError|NameError|ModuleNotFoundError|ImportError|"
         r"SyntaxError|IndentationError|is not callable",
@@ -162,6 +183,11 @@ class TriageReport:
         """需要写缺陷报告的（系统 Bug）——这部分**永远不改测试**。"""
         return tuple(v for v in self.verdicts if v.action is Action.REPORT_DEFECT)
 
+    @property
+    def held(self) -> tuple[Verdict, ...]:
+        """挂起等人确认的（契约与实现不一致）——不改、也不重写。"""
+        return tuple(v for v in self.verdicts if v.action is Action.HOLD)
+
     # ---- 渲染 ----
     def conclusion(self) -> str:
         if self.error:
@@ -174,7 +200,11 @@ class TriageReport:
             if n:
                 parts.append(f"{kind.value} {n}")
         head = "出现服务不可达，必须停手；" if self.must_stop else ""
-        tail = f"其中 {len(self.defects)} 条是**服务端缺陷**，不许改测试。" if self.defects else ""
+        tail = ""
+        if self.defects:
+            tail += f"其中 {len(self.defects)} 条是**服务端缺陷**，不许改测试。"
+        if self.held:
+            tail += f"另有 {len(self.held)} 条**疑似契约与实现不一致**，需人工确认（不改测试）。"
         return f"{head}共 {len(self.verdicts)} 条失败：" + "、".join(parts) + "。" + tail
 
     def render(self) -> str:

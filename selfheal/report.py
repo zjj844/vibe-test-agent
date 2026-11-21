@@ -41,6 +41,7 @@ REPORT_DIR = Path(__file__).resolve().parent.parent / "reports"
 _STATUS_TEXT = {
     "success": "✅ 全部通过",
     "defect": "⚠️ 发现服务端缺陷（已出缺陷清单，未改测试）",
+    "needs_human": "🟡 疑似契约与实现不一致（已挂起，需人工确认；未改测试）",
     "unreachable": "⛔ 服务不可达，已停手",
     "gave_up": "❌ 达到轮数上限仍未通过",
     "error": "❗ 执行层失败",
@@ -82,6 +83,8 @@ def _fmt_round(idx: int, r) -> list[str]:
         lines.append("- 分流：" + "、".join(
             f"{k.value} {t.count(k)}" for k in type(t.verdicts[0].kind) if t.count(k)
         ))
+    if r.advices:
+        lines.append(f"- AI 辅助判断：{len(r.advices)} 条（仅供参考，未产生任何动作）")
     if r.note:
         lines.append(f"- 决定：{r.note}")
     lines.append("")
@@ -131,6 +134,35 @@ def build(cycle: "CycleResult") -> str:
     else:
         lines.append("- 无（本次没有发现服务端缺陷）")
     lines.append("")
+
+    # ---- 需人工确认（契约与实现不一致：不改也不重写）----
+    held = cycle.final_triage.held if cycle.final_triage else ()
+    if held:
+        lines += ["## 需人工确认（HTTP 通了但数据不符：不改测试、不自动重写）", ""]
+        lines += [
+            "> 这三者只有人能分清：**服务错了 / 契约写错了 / 用例写错了**。",
+            "> 工具在这里主动放弃自动修复 —— 因为改断言是最省事、也最容易把缺陷藏起来的做法。",
+            "",
+            "| 用例 | 判定依据 |",
+            "|---|---|",
+        ]
+        for v in held:
+            lines.append(f"| `{v.nodeid}` | 命中规则 `{v.matched}`：{v.reason} |")
+        lines.append("")
+
+    # ---- AI 辅助判断（只给建议，没有任何动作权限）----
+    advices = cycle.final_advices
+    if advices:
+        lines += ["## AI 辅助判断（仅供参考：模型无改测试/改契约的权限）", ""]
+        for a in advices:
+            if a.ok:
+                lines.append(f"- `{a.nodeid}`")
+                lines.append(f"  - 责任判断：**{a.responsibility}**")
+                lines.append(f"  - 依据：{a.reason}")
+                lines.append(f"  - 建议（给人）：{a.suggestion}")
+            else:
+                lines.append(f"- `{a.nodeid}`：AI 未给出建议（{a.error}）")
+        lines.append("")
 
     # ---- 可修类（工具能处理的） ----
     fixable = cycle.final_triage.fixable if cycle.final_triage else ()

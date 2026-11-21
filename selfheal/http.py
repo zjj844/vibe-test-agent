@@ -131,15 +131,19 @@ class HttpResult:
         Java CMS 的 401 是 **HTTP 200 + body 里 code=401**（拦截器直接写 JSON，
         没改状态码）。只查"字段存在"是完全测不出鉴权的 ——
         必须能断言 `body["code"] == 401`，否则"未登录应该被拒绝"这条用例形同虚设。
+
+        **支持点路径**：键写成 `"data.total"` 会去 body["data"]["total"] 取值。
+        为什么需要：真实接口的期望值大多在嵌套里（`{code, msg, data:{total}}`），
+        只能比顶层字段的话，"数据算错了"这类 bug 根本进不了契约。
         """
         if not expect_json:
             return []
-        body = self.json_body or {}
-        return [
-            f"{k}: 期望 {v!r}，实际 {body.get(k)!r}"
-            for k, v in expect_json.items()
-            if body.get(k) != v
-        ]
+        out: list[str] = []
+        for key, want in expect_json.items():
+            actual = _dig(self.json_body, key)
+            if actual != want:
+                out.append(f"{key}: 期望 {want!r}，实际 {actual!r}")
+        return out
 
     def summary(self) -> str:
         if self.network_failed:

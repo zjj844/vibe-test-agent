@@ -37,36 +37,33 @@ def check_contract(endpoint, r):
     bad = r.json_mismatches(endpoint.expect_json)
     assert not bad, f"响应字段值与契约不符：{bad}"
 
-# 覆盖接口：items, order-detail
-def test_items_list_returns_array_with_required_fields():
-    """FR-1：商品列表应返回 code=200，data 为数组，且每个元素包含 id/name/price。"""
-    check_contract(*api("items"))
+# 覆盖接口：items, order-detail, order-total
+def test_items_list_normal_flow():
+    """覆盖商品列表正常流程：FR-1 商品列表接口应返回 200 且 code=200。"""
     endpoint, r = api("items")
-
-    assert r.status == 200, f"商品列表接口应返回 200，实际返回 {r.status}"
+    check_contract(endpoint, r)
     body = r.json_body
     assert body["code"] == 200
-    assert body.get("msg") == "操作成功"
-
-    data = body.get("data")
-    assert isinstance(data, list), "data 必须是数组，不能是 null"
-    for item in data:
-        assert isinstance(item, dict)
-        assert "id" in item
-        assert "name" in item
-        assert "price" in item
+    assert body["msg"] is not None
+    assert body["data"] is not None
 
 
-def test_order_detail_missing_order_returns_404_not_500():
-    """FR-3：订单不存在时 GET /api/orders/42 必须返回 404 + code=404，不得因查不到数据而 500。"""
-    check_contract(*api("order-detail"))
+def test_order_detail_not_found_returns_404_not_500():
+    """覆盖订单不存在异常：FR-3 42 号订单不存在时必须返回 404，不得 500。"""
     endpoint, r = api("order-detail")
-
-    assert r.status == 404, (
-        f"订单不存在应返回 404，实际返回 {r.status}；"
-        "服务端把“查不到数据”当成了程序错误"
-    )
+    check_contract(endpoint, r)
     body = r.json_body
     assert body["code"] == 404
-    assert body.get("msg") == "订单不存在"
+    assert body["msg"] == "订单不存在"
     assert body.get("data") is None
+
+
+def test_order_total_must_equal_unit_price_times_quantity():
+    """覆盖订单总价计算：FR-4 41 号订单 2 件单价 399，total 必须为 798。"""
+    endpoint, r = api("order-total")
+    check_contract(endpoint, r)
+    body = r.json_body
+    assert body["code"] == 200
+    assert body["data"]["order_id"] == 41
+    assert body["data"]["total"] == 798
+    assert body["data"]["total"] == 399 * 2

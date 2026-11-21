@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import critic, generator, kb, report, runner, snapshot, targets, triage
+from . import advisor, critic, generator, kb, report, runner, snapshot, targets, triage
 
 # 生成产物的默认目录（runner/triage 都认这个约定）
 GENERATED_DIR = Path(__file__).resolve().parent.parent / "evals" / "generated"
@@ -66,6 +66,7 @@ GENERATED_DIR = Path(__file__).resolve().parent.parent / "evals" / "generated"
 # 循环状态
 SUCCESS = "success"            # 全部通过
 DEFECT = "defect"              # 发现服务端缺陷（已出清单，未改测试）
+NEEDS_HUMAN = "needs_human"    # 契约与实现不一致，责任分不清 → 挂起交给人
 UNREACHABLE = "unreachable"    # 服务不可达，停手
 GAVE_UP = "gave_up"            # 达到轮数上限仍未通过
 ERROR = "error"                # 执行层失败（pytest 崩了 / 生成不合法）
@@ -87,6 +88,7 @@ class RoundResult:
     generated_file: Path | None = None
     run: runner.RunResult | None = None
     triage: triage.TriageReport | None = None
+    advices: list[advisor.Advice] = field(default_factory=list)   # AI 辅助归因（仅供参考）
     note: str = ""                     # 这一轮结束后"决定继续/停止"的理由
     elapsed: float = 0.0
 
@@ -123,6 +125,14 @@ class CycleResult:
             if r.triage is not None:
                 return r.triage
         return None
+
+    @property
+    def final_advices(self) -> list[advisor.Advice]:
+        """最后一次有效的 AI 建议（报告用）。"""
+        for r in reversed(self.rounds):
+            if r.advices:
+                return r.advices
+        return []
 
     @property
     def ok(self) -> bool:
@@ -181,6 +191,7 @@ def run_cycle(
     n_cases: int = 3,
     max_rounds: int = 2,
     use_critic: bool = True,
+    use_advisor: bool = True,
     gen_dir: Path | str = GENERATED_DIR,
     report_dir: Path | str = report.REPORT_DIR,
     write_report: bool = True,
@@ -193,6 +204,7 @@ def run_cycle(
       n_cases      —— 每轮生成几条用例
       max_rounds   —— 轮数上限（**有界**的核心）
       use_critic   —— 是否跑自评（关掉可省一次模型调用，调试时常用）
+      use_advisor  —— 是否让模型给"规则判不了"的失败出建议（只出建议，无权限）
       write_report —— 是否写出 Markdown 报告
       on_step      —— 可选进度回调 `on_step(round_idx, stage)`。
                       给前端报告台用的：有了它，界面才能显示"现在走到第几步"，
@@ -310,6 +322,18 @@ def run_cycle(
             _notify(on_step, idx, "失败分流")
             r.triage = triage.classify_run(r.run)
 
+            # ---------- 第 8.5 步：AI 辅助归因（只兜规则判不了的那几条）----------
+            # 规则命中就绝不问模型；这里只为 MANUAL / HOLD 那几条争取一条"人话解释"。
+            # 模型不给权限：它只产出一段建议，改不改、跑不跑，全看下面的决策。
+            if use_advisor:
+                for verdict in r.triage.verdicts:
+                    if not advisor.should_consult(verdict):
+                        continue
+                    _notify(on_step, idx, "AI 辅助归因")
+                    case = next((c for c in r.run.cases if c.nodeid == verdict.nodeid), None)
+                    if case is not None:
+                        r.advices.append(advisor.advise(case, verdict))
+
             # ---------- 第 9 步：决定 ----------
             _notify(on_step, idx, "决策")
             if r.run.all_green:
@@ -322,15 +346,31 @@ def run_cycle(
                 cycle.status = UNREACHABLE
                 break
 
+            # 契约与实现不一致（HTTP 通了但数据不对）：责任分不清 → 挂起交给人。
+            # 这一条必须在"可修类"之前判：它一旦被判成可修，第 2 轮就可能把断言改宽。
+            # 顺序上放在"系统缺陷"之后：真有 5xx 时，结论按更严重的那个算。
             if r.triage.defects and not r.triage.fixable:
                 # 全是系统 Bug：一条都不许改，直接出缺陷报告
                 r.note = f"发现 {len(r.triage.defects)} 条系统缺陷 → 不改测试，出报告"
                 cycle.status = DEFECT
                 break
 
+            if r.triage.held and not r.triage.fixable:
+                r.note = (
+                    f"{len(r.triage.held)} 条疑似契约与实现不一致 → 不改测试，挂起交给人确认"
+                )
+                cycle.status = NEEDS_HUMAN
+                break
+
             if r.triage.defects:
                 cycle.notes.append(
                     f"第 {idx} 轮：{len(r.triage.defects)} 条系统缺陷先挂起（不修），"
+                    f"只修 {len(r.triage.fixable)} 条可修失败"
+                )
+
+            if r.triage.held:
+                cycle.notes.append(
+                    f"第 {idx} 轮：{len(r.triage.held)} 条契约疑似有问题，先挂起（不改），"
                     f"只修 {len(r.triage.fixable)} 条可修失败"
                 )
 
@@ -363,7 +403,10 @@ def _elapsed_of(cycle: CycleResult) -> float:
 # ---------------------------------------------------------------------------
 # 终端渲染
 # ---------------------------------------------------------------------------
-_MARK = {SUCCESS: "✅", DEFECT: "⚠️", UNREACHABLE: "⛔", GAVE_UP: "❌", ERROR: "❗"}
+_MARK = {
+    SUCCESS: "✅", DEFECT: "⚠️", NEEDS_HUMAN: "🟡",
+    UNREACHABLE: "⛔", GAVE_UP: "❌", ERROR: "❗",
+}
 
 
 def render(cycle: CycleResult) -> str:
@@ -403,6 +446,18 @@ def render(cycle: CycleResult) -> str:
         for v in defects:
             lines.append(f"  · {v.nodeid}｜{v.reason}")
 
+    held = cycle.final_triage.held if cycle.final_triage else ()
+    if held:
+        lines.append("\n需人工确认（契约与实现不一致：不改测试、也不重写）：")
+        for v in held:
+            lines.append(f"  · {v.nodeid}｜{v.reason}")
+
+    advices = cycle.final_advices
+    if advices:
+        lines.append("\nAI 辅助判断（仅供参考，无任何动作权限）：")
+        for a in advices:
+            lines.append(f"  · {a.nodeid}｜{a.line()}")
+
     if cycle.report_path:
         lines.append(f"\n报告：{cycle.report_path}")
     return "\n".join(lines)
@@ -427,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n", type=int, default=3, help="每轮生成几条用例")
     ap.add_argument("--rounds", type=int, default=2, help="轮数上限（有界）")
     ap.add_argument("--no-critic", action="store_true", help="跳过 rubric 自评（省一次模型调用）")
+    ap.add_argument("--no-advisor", action="store_true", help="不让模型给失败出建议（只用规则）")
     ap.add_argument("--no-report", action="store_true", help="不写 Markdown 报告")
     args = ap.parse_args(argv)
 
@@ -435,10 +491,12 @@ def main(argv: list[str] | None = None) -> int:
         n_cases=args.n,
         max_rounds=args.rounds,
         use_critic=not args.no_critic,
+        use_advisor=not args.no_advisor,
         write_report=not args.no_report,
     )
     print(render(cycle))
-    return 0 if cycle.status in (SUCCESS, DEFECT) else 1
+    # 退出码：0 = 全绿或发现了缺陷（这两种都是"有效运行"）；1 = 挂了/没跑成
+    return 0 if cycle.status in (SUCCESS, DEFECT, NEEDS_HUMAN) else 1
 
 
 if __name__ == "__main__":

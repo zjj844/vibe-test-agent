@@ -77,35 +77,51 @@ python -m pytest -q
 ## 复现一份真实的缺陷报告（约 1 分钟）
 
 「系统 Bug 不许改测试」是这个项目最重要的一条原则。为了让人能亲眼看到它，
-仓库里内置了一个**故意带 Bug 的示例服务**（`demo/buggy_service.py`）：
+仓库里内置了一个**故意带 Bug 的示例服务**（`demo/buggy_service.py`），里面埋了两种不同的坏法：
+
+| 接口 | 坏法 | 工具应当怎么处理 |
+|---|---|---|
+| `GET /api/orders/42` | 订单不存在时**直接 500** | 判为「系统 Bug」→ 出缺陷清单，**不改测试** |
+| `GET /api/orders/41/total` | HTTP **200**，但总价忘了乘数量（返回 399，应为 798） | 判为「契约与实现不一致」→ **挂起交给人**，不改也不重写 |
 
 ```bash
-# 终端 1：起示例服务（42 号订单不存在时直接 500）
+# 终端 1：起示例服务
 python demo/buggy_service.py
 
 # 终端 2：让工具去测它
-python -m selfheal.loop --target demo-buggy --n 2 --rounds 2
+python -m selfheal.loop --target demo-buggy --n 3 --rounds 2
 ```
 
-预期输出：
+预期输出（节选）：
 
 ```
-  跑   通过 1 / 共 2（1.0s）
-  分   共 1 条失败：系统Bug 1。其中 1 条是**服务端缺陷**，不许改测试。
+  跑   通过 1 / 共 3（1.0s）
+  分   共 2 条失败：系统Bug 1、契约与实现不一致 1。
+       其中 1 条是**服务端缺陷**，不许改测试。另有 1 条疑似契约与实现不一致，需人工确认（不改测试）。
   定   发现 1 条系统缺陷 → 不改测试，出报告
+
 结果：⚠️ defect
-  ✅ test_items_list_returns_array_with_required_fields            passed
-  ❌ test_order_detail_missing_order_returns_404_not_500           failed
+  ✅ test_items_list_normal_flow                                  passed
+  ❌ test_order_detail_not_found_returns_404_not_500              failed
+  ❌ test_order_total_must_equal_unit_price_times_quantity        failed
 
 缺陷清单（工具不改测试，需人工跟进）：
-  · …::test_order_detail_missing_order_returns_404_not_500｜接口返回 5xx：这是服务端缺陷…
+  · …::test_order_detail_not_found_returns_404_not_500｜接口返回 5xx：这是服务端缺陷…
+需人工确认（契约与实现不一致：不改测试、也不重写）：
+  · …::test_order_total_must_equal_unit_price_times_quantity｜HTTP 通了但数据不对…
+AI 辅助判断（仅供参考，无任何动作权限）：
+  · …｜[AI 判断] 服务端缺陷 —— total 恰好等于单价 399，说明金额合计未按数量计算…
 ```
 
-注意三件事：
+四个关键点：
 
 1. **通过的用例照常通过** —— 工具不会"一律报错"来刷存在感
-2. **失败的那条立即停手**，没有第二轮重写：改测试让 500 变绿等于把缺陷藏起来
-3. 报告结论是 `⚠️ 发现服务端缺陷（已出缺陷清单，未改测试）`，样例见 `docs/samples/REPORT-demo-buggy-defect.md`
+2. **两种失败都没改测试**，也没触发第二轮重写：改断言让它们变绿等于把缺陷藏起来
+3. **「200 但数据错」这一类被单独拎出来挂起** —— 因为责任可能是服务、契约、用例三者之一，
+   只有人能分清（这是本项目最容易被忽略的坑：如果判成"断言问题"，第 2 轮就会把断言改宽）
+4. **AI 只在规则判不了时出场**，而且只产出一段建议，**没有任何动作权限**
+
+样例报告与生成的用例：`docs/samples/REPORT-demo-buggy-defect.md`、`docs/samples/generated-cases-demo-defect.py`
 
 ---
 
