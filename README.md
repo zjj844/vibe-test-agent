@@ -24,19 +24,27 @@
 ## 流程（背这一行）
 
 ```
-探 → 读 → 写 → 评 → 跑 → 分 → 修（≤2 轮）→ 报
+探 → 读 → 写 → 校验 → 评 → 快照 → 跑 → 分 → 定 → 报
 ```
 
 | 步 | 动作 | 对应模块 |
 |---|---|---|
-| 探 | 探活，服务没起就停手 | `targets.py` |
-| 读 | 读契约 + 从需求文档检索"该测什么" | `targets.py` + `kb.py` |
+| 探 | 探活，服务没起就停手 | `targets.py` ✅ |
+| 读 | 读契约 + 从需求文档检索"该测什么" | `kb.py` ✅ |
 | 写 | 生成 pytest 用例 | `generator.py` ✅ |
-| 评 | 按 rubric 自评，2 次取中位 | `critic.py` |
-| 跑 | 执行 pytest，解析 junitxml | `runner.py`（待实现） |
-| 分 | 失败分 5 类 | `triage.py`（待实现） |
-| 修 | 只修可修的两类，改前快照 | `snapshot.py` + `loop.py`（待实现） |
-| 报 | 出 Markdown 报告 | `report.py`（待实现） |
+| 校验 | 静态检查（毫秒级，不合规就不执行） | `generator.py` ✅ |
+| 评 | 按 rubric 自评，2 次取中位 | `critic.py` ✅ |
+| 快照 | 每轮产物留回滚点 | `snapshot.py` ✅ |
+| 跑 | 执行 pytest，解析 junitxml | `runner.py` ✅ |
+| 分 | 失败分 5 类 | `triage.py` ✅ |
+| 定 | 继续 / 停手 / 出缺陷报告（≤2 轮） | `loop.py` ✅ |
+| 报 | 出 Markdown 报告 | `report.py` ✅ |
+
+**一条命令跑完全流程：**
+
+```bash
+python -m selfheal.loop --target rag-backend --n 3 --rounds 2
+```
 
 ---
 
@@ -45,6 +53,9 @@
 ```bash
 pip install -r requirements.txt
 cp .env.example .env        # 填入 DEEPSEEK_API_KEY
+
+# 0) 一条命令跑完整个自愈闭环（需要被测服务已经跑起来）
+python -m selfheal.loop --target rag-backend --n 3 --rounds 2
 
 # 1) 看契约 + 探活（需要被测服务已经跑起来）
 python -m selfheal.targets --target rag-backend

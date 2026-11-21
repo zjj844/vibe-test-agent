@@ -134,8 +134,21 @@ def describe_endpoints(target: Target) -> str:
     return "\n".join(lines)
 
 
-def build_messages(target: Target, requirements: list[dict], n_cases: int = 3) -> list[dict]:
-    """组装发给模型的消息。requirements 来自 kb.search()。"""
+def build_messages(
+    target: Target,
+    requirements: list[dict],
+    n_cases: int = 3,
+    feedback: str = "",
+) -> list[dict]:
+    """组装发给模型的消息。requirements 来自 kb.search()。
+
+    feedback：上一轮跑失败的原因摘要（由 loop 提供）。
+    为什么要单独传它、而不是塞进 system prompt：
+    它是**每一轮都不同**的增量信息，属于对话内容；塞进系统提示会让"生成规则"
+    和"上次错在哪"混在一起，模型更容易把规则也当成可协商的东西。
+    而且只喂"可修类"失败（见 loop._feedback_from）——系统缺陷绝不回喂，
+    否则等于教模型"改测试让缺陷消失"。
+    """
     req_text = (
         "\n\n".join(f"【{c['chunk_id']}】\n{c['text']}" for c in requirements)
         or "（本次未检索到需求片段，只依据契约与业务含义写）"
@@ -144,6 +157,12 @@ def build_messages(target: Target, requirements: list[dict], n_cases: int = 3) -
         endpoints=describe_endpoints(target), requirements=req_text, n=n_cases
     )
     user = f"请为被测项目 `{target.name}` 生成 {n_cases} 个 pytest 接口测试用例。"
+    if feedback:
+        user += (
+            "\n\n上一轮这批用例跑出来的问题如下（属于测试代码自身的问题，"
+            "请在新一版里避免；如果是被测服务本身的 Bug，不要改断言去迁就它）：\n"
+            + feedback
+        )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
@@ -244,13 +263,19 @@ def generate(
     requirements: list[dict] | None = None,
     n_cases: int = 3,
     max_repair: int = 1,
+    feedback: str = "",
 ) -> GenerationResult:
     """生成测试代码。
 
     max_repair=1 是刻意的上限，理由同架构文档：
     只在"静态检查能判定"的违规上重试；重试次数越多，模型越会为了通过检查而敷衍。
+
+    feedback 由自愈主循环（loop.py）在第二轮传入：上一轮跑失败的原因摘要。
+    注意这跟 max_repair 是两件事：
+      · max_repair —— **同一轮内**因静态检查不过而重写（秒级，不执行）
+      · feedback   —— **跨轮**因实际跑失败而重写（分钟级，跑过了）
     """
-    messages = build_messages(target, requirements or [], n_cases)
+    messages = build_messages(target, requirements or [], n_cases, feedback)
     violations: list[str] = []
     code = ""
     repaired = False
