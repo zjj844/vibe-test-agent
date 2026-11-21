@@ -1,7 +1,7 @@
 # vibe-test-agent
 
-<!-- 推上 GitHub 后，把下面徽章里的 USERNAME 换成你的 GitHub 用户名，CI 还没跑绿之前可以先删掉这一行 -->
-![ci](https://github.com/USERNAME/vibe-test-agent/actions/workflows/ci.yml/badge.svg)
+<!-- CI 第一次跑绿之后保留这一行；如果红了先删掉，别挂个红徽章 -->
+![ci](https://github.com/zjj844/vibe-test-agent/actions/workflows/ci.yml/badge.svg)
 
 **AI 增强的接口自动化测试工具（自愈测试 MVP）**
 
@@ -320,7 +320,7 @@ Playwright / UI 自动化 · CrewAI · Langfuse 追踪 · 多 Agent 编排 · We
 
 ## 与另一个项目的关系
 
-同一作者还有一个 RAG 问答产品（`vibe-coding-rag-lab`）。
+同一作者还有一个 RAG 问答产品：[**vibe-coding-rag-lab**](https://github.com/zjj844/vibe-coding-rag-lab)（RAG + Web 后端 + Vue 3 / React 18 双前端）。
 
 **本工具用它当第一个被测对象**（dogfooding），同时也从它那里移植了纯算法模块（`retrieval/`）。
 但两者独立成仓库：删掉任一个，另一个都能单独跑。
