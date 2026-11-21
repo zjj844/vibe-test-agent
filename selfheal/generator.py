@@ -288,13 +288,61 @@ def generate(
 # ---------------------------------------------------------------------------
 # 落盘：模板头 + 模型写的函数
 # ---------------------------------------------------------------------------
+ARCHIVE_DIR = "_archive"
+
+# 归档目录里的 conftest：告诉 pytest"别收集 _archive 里的文件"。
+# 为什么需要它：`pytest evals/generated` 会**递归**收集子目录，
+# 光把旧文件挪进 _archive/ 是不够的——它们照样会被执行，于是历史 bug 反复报红。
+# 这是 pytest 的收集控制机制（collect_ignore_glob），比"换个目录名"更明确。
+_ARCHIVE_CONFTEST = '''"""自动生成：禁止 pytest 收集本目录（这里是历史批次）。"""
+
+collect_ignore_glob = ["*_archive/*", "_archive/*"]
+'''
+
+
+def _ensure_archive_conftest(out: Path) -> None:
+    """确保产物目录有一份 conftest，让 pytest 跳过归档目录。"""
+    conftest = out / "conftest.py"
+    if not conftest.exists():
+        conftest.write_text(_ARCHIVE_CONFTEST, encoding="utf-8")
+
+
+def archive_previous(out_dir: Path | str = DEFAULT_OUT_DIR) -> list[Path]:
+    """把上一批生成的文件挪进 `_archive/`，让 `evals/generated/` 里**只剩当前批次**。
+
+    为什么必须做这件事（实测踩到）：
+    你在终端很自然会敲 `pytest evals/generated`。如果历史批次留在原地，
+    上一版带 bug 的文件也会被一起执行，于是出现"3 failed, 6 passed"——
+    而失败的原因早就修好了，只是旧文件还躺在那儿。
+    → **产物目录必须只有"当前一批"**，历史进 `_archive/`（保留证据，但不再执行）。
+    """
+    out = Path(out_dir)
+    old = sorted(out.glob("test_generated_*.py"))
+    if not old:
+        return []
+    dest = out / ARCHIVE_DIR
+    dest.mkdir(parents=True, exist_ok=True)
+    moved: list[Path] = []
+    for src in old:
+        target = dest / src.name
+        if target.exists():                      # 同一秒生成过同名文件：加序号
+            target = dest / f"{src.stem}-{time.strftime('%f')}{src.suffix}"
+        src.replace(target)
+        moved.append(target)
+    return moved
+
+
 def save(result: GenerationResult, target: Target, out_dir: Path | str = DEFAULT_OUT_DIR, tag: str = "") -> Path:
     """写出一个**完整可运行**的测试文件。
 
     注意：模板头是我们写的，模型只贡献函数部分——所以生成文件永远有正确的 import。
+    落盘前会把上一批挪进 `_archive/`（见 archive_previous 的注释）。
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    _ensure_archive_conftest(out)
+    archive_previous(out)
+
     stamp = time.strftime("%Y%m%d-%H%M%S")
     safe_tag = re.sub(r"\W+", "-", tag)[:20].strip("-")
     name = f"test_generated_{stamp}{('-' + safe_tag) if safe_tag else ''}.py"
