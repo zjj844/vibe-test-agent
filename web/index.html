@@ -40,8 +40,83 @@
         <button class="run" @click="runOnce" :disabled="running || !form.target">
           {{ running ? '运行中…' : '▶ 运行一次' }}
         </button>
+        <button class="ghost" @click="imp.open = !imp.open">
+          {{ imp.open ? '收起导入' : '＋ 导入新项目' }}
+        </button>
       </div>
     </header>
+
+    <!-- ================= 导入项目：AI 起草契约 ================= -->
+    <section v-if="imp.open" class="importer">
+      <div class="importer-head">
+        <strong>导入一个新项目</strong>
+        <span class="muted small">
+          把 Controller 源码丢进来 → AI 起草契约 → 你核对后保存（<b>草案不会自动落盘</b>）
+        </span>
+      </div>
+
+      <div class="importer-form">
+        <label>
+          项目名
+          <input v-model.trim="imp.name" placeholder="my-app（小写/数字/连字符）" />
+        </label>
+        <label>
+          服务地址
+          <input v-model.trim="imp.base_url" placeholder="http://127.0.0.1:9000" />
+        </label>
+        <label>
+          源码文件
+          <input type="file" multiple @change="pickFiles"
+                 accept=".java,.py,.cs,.js,.ts,.go,.json,.txt" />
+        </label>
+        <button class="run" @click="draftContract"
+                :disabled="imp.busy || !imp.name || !imp.base_url || !imp.files.length">
+          {{ imp.busy ? 'AI 起草中…（10~20 秒）' : 'AI 起草契约' }}
+        </button>
+      </div>
+
+      <p v-if="imp.files.length" class="muted small">
+        已选 {{ imp.files.length }} 个文件：{{ imp.files.map(f => f.path).join('、') }}
+      </p>
+      <p v-if="imp.message" class="muted small">{{ imp.message }}</p>
+      <p v-if="imp.error" class="error">{{ imp.error }}</p>
+
+      <div v-if="draftRows.length" class="draft">
+        <div class="draft-head">
+          <strong>草案：{{ draftRows.length }} 个接口</strong>
+          <span class="muted small">每一格都能改；确认无误再保存</span>
+        </div>
+        <table class="draft-table">
+          <thead>
+            <tr><th>id</th><th>方法</th><th>路径</th><th>期望码</th><th>业务含义</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(ep, i) in draftRows" :key="i">
+              <td><input v-model.trim="ep.id" /></td>
+              <td>
+                <select v-model="ep.method">
+                  <option>GET</option><option>POST</option>
+                  <option>PUT</option><option>DELETE</option>
+                </select>
+              </td>
+              <td><input v-model.trim="ep.path" /></td>
+              <td><input type="number" v-model.number="ep.expect_status" /></td>
+              <td><input v-model.trim="ep.notes" /></td>
+              <td><button class="ghost tiny" @click="draftRows.splice(i, 1)">删</button></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="draft-actions">
+          <button class="ghost" @click="addEndpoint">＋ 加一行</button>
+          <label class="inline">
+            <input type="checkbox" v-model="imp.force" /> 覆盖同名契约
+          </label>
+          <button class="run" @click="saveContract" :disabled="imp.saving">
+            {{ imp.saving ? '保存中…' : '保存为契约' }}
+          </button>
+        </div>
+      </div>
+    </section>
 
     <!-- ================= 运行进度 ================= -->
     <section v-if="running || runMessage" class="progress" :class="runState.status">

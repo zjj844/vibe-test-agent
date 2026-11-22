@@ -187,7 +187,7 @@ class TargetConfigError(Exception):
     """配置文件写错时抛这个（而不是让 KeyError 到处飞）。"""
 
 
-def _resolve_requirements_dir(raw: str | None, config_path: Path) -> Path | None:
+def _resolve_requirements_dir(raw: str | None, config_path: Path | None) -> Path | None:
     """解析契约里的 `requirements_dir`。
 
     为什么要这个字段：我第一次拿这个工具去测 Java CMS 时，检索到的需求片段
@@ -205,10 +205,91 @@ def _resolve_requirements_dir(raw: str | None, config_path: Path) -> Path | None
     if not path.is_absolute():
         path = ROOT / path
     if not path.is_dir():
-        raise TargetConfigError(
-            f"{config_path.name} 里的 requirements_dir 不存在：{path}"
-        )
+        label = config_path.name if config_path else "<内存中的契约>"
+        raise TargetConfigError(f"{label} 里的 requirements_dir 不存在：{path}")
     return path
+
+
+def parse_target(data: dict, source_file: Path | None = None) -> Target:
+    """从**已解析的 dict** 造 Target。
+
+    为什么单独拆出来：契约草案（`bootstrap.py`）是模型现场生成的 dict，
+    还没有文件可读。如果校验只能走"先写文件再读文件"，就得跟磁盘打交道，
+    又慢又脏。拆开后，**加载器和草案校验用的是同一份规则** ——
+    模型输出合不合格，由加载器说了算，而不是另写一套检查。
+    """
+    label = source_file.name if source_file else "<内存中的契约>"
+
+    # ---- 必填字段检查：早失败，错误信息要说清缺什么 ----
+    for key in ("name", "base_url", "endpoints"):
+        if key not in data:
+            raise TargetConfigError(f"{label} 缺少必填字段：{key}")
+
+    endpoints = tuple(
+        Endpoint(
+            id=ep["id"],
+            method=ep.get("method", "GET").upper(),
+            path=ep["path"],
+            expect_status=int(ep.get("expect_status", 200)),
+            expect_fields=tuple(ep.get("expect_fields", ())),
+            notes=ep.get("notes", ""),
+            body=ep.get("body"),
+            params=ep.get("params"),
+            expect_json=ep.get("expect_json"),
+            no_auth=bool(ep.get("no_auth", False)),
+        )
+        for ep in data["endpoints"]
+    )
+    if not endpoints:
+        raise TargetConfigError(f"{label} 里 endpoints 是空的，没东西可测")
+
+    ids = [e.id for e in endpoints]
+    duplicated = sorted({i for i in ids if ids.count(i) > 1})
+    if duplicated:
+        raise TargetConfigError(f"{label} 里 endpoint id 重复：{duplicated}")
+
+    # ---- 登录态（可选）：配了就得指向真实存在的接口 ----
+    auth: AuthConfig | None = None
+    auth_raw = data.get("auth")
+    if auth_raw:
+        auth = AuthConfig(
+            endpoint=auth_raw.get("endpoint", "login"),
+            token_path=auth_raw.get("token_path", "data.token"),
+            header=auth_raw.get("header", "Authorization"),
+            prefix=auth_raw.get("prefix", "Bearer "),
+        )
+        if not any(e.id == auth.endpoint for e in endpoints):
+            raise TargetConfigError(
+                f"{label} 的 auth.endpoint='{auth.endpoint}' 不在 endpoints 里；"
+                f"现有接口：{', '.join(ids)}"
+            )
+
+    # ---- 探活接口：没显式写就用第一个接口 ----
+    health_raw = data.get("health")
+    if health_raw:
+        health_id = health_raw.get("id")
+        health = next((e for e in endpoints if e.id == health_id), None) if health_id else None
+        if health is None:
+            # 允许 health 单独声明一个不在 endpoints 里的最小接口
+            health = Endpoint(
+                id="__health__",
+                method=health_raw.get("method", "GET").upper(),
+                path=health_raw["path"],
+                expect_status=int(health_raw.get("expect_status", 200)),
+            )
+    else:
+        health = endpoints[0]
+
+    return Target(
+        name=data["name"],
+        base_url=data["base_url"],
+        endpoints=endpoints,
+        health=health,
+        timeout=float(data.get("timeout", 10.0)),
+        source_file=source_file,
+        auth=auth,
+        requirements_dir=_resolve_requirements_dir(data.get("requirements_dir"), source_file),
+    )
 
 
 def load_target(name_or_path: str | Path) -> Target:
@@ -234,72 +315,7 @@ def load_target(name_or_path: str | Path) -> Target:
     # json.loads 会直接报 "Unexpected UTF-8 BOM"。
     # utf-8-sig 会**自动剥掉** BOM，对不带 BOM 的文件也兼容。
     data = json.loads(path.read_text(encoding="utf-8-sig"))
-
-    # ---- 必填字段检查：早失败，错误信息要说清缺什么 ----
-    for key in ("name", "base_url", "endpoints"):
-        if key not in data:
-            raise TargetConfigError(f"{path.name} 缺少必填字段：{key}")
-
-    endpoints = tuple(
-        Endpoint(
-            id=ep["id"],
-            method=ep.get("method", "GET").upper(),
-            path=ep["path"],
-            expect_status=int(ep.get("expect_status", 200)),
-            expect_fields=tuple(ep.get("expect_fields", ())),
-            notes=ep.get("notes", ""),
-            body=ep.get("body"),
-            params=ep.get("params"),
-            expect_json=ep.get("expect_json"),
-            no_auth=bool(ep.get("no_auth", False)),
-        )
-        for ep in data["endpoints"]
-    )
-    if not endpoints:
-        raise TargetConfigError(f"{path.name} 里 endpoints 是空的，没东西可测")
-
-    # ---- 登录态（可选）：配了就得指向真实存在的接口 ----
-    auth: AuthConfig | None = None
-    auth_raw = data.get("auth")
-    if auth_raw:
-        auth = AuthConfig(
-            endpoint=auth_raw.get("endpoint", "login"),
-            token_path=auth_raw.get("token_path", "data.token"),
-            header=auth_raw.get("header", "Authorization"),
-            prefix=auth_raw.get("prefix", "Bearer "),
-        )
-        if not any(e.id == auth.endpoint for e in endpoints):
-            raise TargetConfigError(
-                f"{path.name} 的 auth.endpoint='{auth.endpoint}' 不在 endpoints 里；"
-                f"现有接口：{', '.join(e.id for e in endpoints)}"
-            )
-
-    # ---- 探活接口：没显式写就用第一个接口 ----
-    health_raw = data.get("health")
-    if health_raw:
-        health_id = health_raw.get("id")
-        health = next((e for e in endpoints if e.id == health_id), None) if health_id else None
-        if health is None:
-            # 允许 health 单独声明一个不在 endpoints 里的最小接口
-            health = Endpoint(
-                id="__health__",
-                method=health_raw.get("method", "GET").upper(),
-                path=health_raw["path"],
-                expect_status=int(health_raw.get("expect_status", 200)),
-            )
-    else:
-        health = endpoints[0]
-
-    return Target(
-        name=data["name"],
-        base_url=data["base_url"],
-        endpoints=endpoints,
-        health=health,
-        timeout=float(data.get("timeout", 10.0)),
-        source_file=path,
-        auth=auth,
-        requirements_dir=_resolve_requirements_dir(data.get("requirements_dir"), path),
-    )
+    return parse_target(data, source_file=path)
 
 
 # ---------------------------------------------------------------------------

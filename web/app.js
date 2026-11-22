@@ -22,6 +22,18 @@ createApp({
       current: null,
       error: "",
       form: { target: "", n_cases: 3, max_rounds: 2 },
+      imp: {
+        open: false,
+        name: "",
+        base_url: "",
+        files: [],         // [{path, content}] —— 浏览器读文件内容，服务端不碰文件系统
+        contract: null,
+        busy: false,
+        saving: false,
+        force: false,
+        message: "",
+        error: "",
+      },
       runState: { status: "idle", target: "", steps: [], message: "", started_at: "", finished_at: "" },
       pollTimer: null,
     };
@@ -34,6 +46,12 @@ createApp({
     runMessage() {
       // 只在"刚跑完/出错"时展示进度条，idle 状态不占地方
       return this.runState.status === "done" || this.runState.status === "error";
+    },
+    /** 草案里的接口行：直接在表格里改，保存时用的就是改后的内容 */
+    draftRows() {
+      return this.imp.contract && Array.isArray(this.imp.contract.endpoints)
+        ? this.imp.contract.endpoints
+        : [];
     },
   },
 
@@ -105,6 +123,101 @@ createApp({
     startPolling() {
       if (this.pollTimer) clearInterval(this.pollTimer);
       this.pollTimer = setInterval(() => this.pollStatus(), 1500);
+    },
+
+    // ---------------- 导入新项目：读文件 → AI 起草 → 人工确认 → 保存 ----------------
+    pickFiles(event) {
+      const picked = Array.from(event.target.files || []);
+      this.imp.files = [];
+      this.imp.error = "";
+      if (!picked.length) return;
+
+      let pending = picked.length;
+      picked.forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          this.imp.files.push({ path: file.name, content: String(reader.result || "") });
+          if (--pending === 0) {
+            this.imp.message = `已读取 ${this.imp.files.length} 个文件，可以起草了`;
+          }
+        };
+        reader.onerror = () => {
+          this.imp.error = `读取文件失败：${file.name}`;
+          if (--pending === 0) return;
+        };
+        reader.readAsText(file, "utf-8");
+      });
+    },
+
+    async draftContract() {
+      this.imp.busy = true;
+      this.imp.error = "";
+      this.imp.message = "正在让模型读源码…";
+      this.imp.contract = null;
+      try {
+        const resp = await fetch("/api/contract/draft", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: this.imp.name,
+            base_url: this.imp.base_url,
+            files: this.imp.files,
+          }),
+        });
+        const data = await resp.json();
+        if (!data.ok) {
+          this.imp.error = (data.violations && data.violations.join("；")) || data.error || "起草失败";
+          this.imp.message = "";
+          // 失败时也把半成品摆出来，方便人工改
+          if (data.contract && data.contract.endpoints) this.imp.contract = data.contract;
+          return;
+        }
+        this.imp.contract = data.contract;
+        this.imp.message = data.summary || "起草完成";
+      } catch (e) {
+        this.imp.error = "起草请求失败：" + e.message;
+      } finally {
+        this.imp.busy = false;
+      }
+    },
+
+    addEndpoint() {
+      if (!this.imp.contract) return;
+      if (!Array.isArray(this.imp.contract.endpoints)) this.imp.contract.endpoints = [];
+      this.imp.contract.endpoints.push({
+        id: "new-endpoint",
+        method: "GET",
+        path: "/api/xxx",
+        expect_status: 200,
+        expect_fields: [],
+        notes: "",
+      });
+    },
+
+    async saveContract() {
+      if (!this.imp.contract) return;
+      this.imp.saving = true;
+      this.imp.error = "";
+      try {
+        const resp = await fetch("/api/contract/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contract: this.imp.contract, force: this.imp.force }),
+        });
+        const data = await resp.json();
+        if (!data.ok) {
+          this.imp.error = data.error || "保存失败";
+          if (data.exists) this.imp.error += "（勾选\"覆盖同名契约\"可覆盖）";
+          return;
+        }
+        this.imp.message = `已保存为契约：${data.name}.json —— 现在可以在上面下拉框里选它并运行`;
+        await this.loadTargets();
+        this.form.target = data.name;
+      } catch (e) {
+        this.imp.error = "保存请求失败：" + e.message;
+      } finally {
+        this.imp.saving = false;
+      }
     },
 
     async pollStatus() {

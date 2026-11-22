@@ -34,6 +34,9 @@
     GET  /api/targets         → 有哪些被测项目契约
     GET  /api/reports         → 历史报告清单（含通过率、结论、缺陷数）
     GET  /api/report?name=xx  → 单份报告（原始 md + 渲染后 html + 元信息）
+    GET  /api/contract?name=x → 读一份已有契约（用于编辑）
+    POST /api/contract/draft  → AI 读源码起草契约（**不落盘**，等人工确认）
+    POST /api/contract/save   → 把人工确认过的契约写进 configs/
     POST /api/run             → 后台跑一次自愈循环 {target, n_cases, max_rounds}
     GET  /api/run/status      → 当前运行状态（供前端轮询）
 
@@ -328,6 +331,61 @@ def list_targets() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# 契约：读 / 起草 / 保存
+# ---------------------------------------------------------------------------
+def load_contract(name: str) -> dict:
+    """读一份已有契约（前端编辑用）。name 同样做白名单校验。"""
+    safe = Path(name).stem
+    if safe != name or "/" in name or "\\" in name or ".." in name:
+        raise ValueError(f"非法的契约名：{name}")
+    path = CONFIG_DIR / f"{safe}.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"契约不存在：{safe}.json")
+    return {"name": safe, "contract": json.loads(path.read_text(encoding="utf-8-sig"))}
+
+
+def draft_contract(payload: dict) -> dict:
+    """AI 读源码起草契约。**只返回草案，绝不落盘。**"""
+    from . import bootstrap
+
+    files = payload.get("files") or []
+    if not isinstance(files, list) or not files:
+        return {"ok": False, "error": "没有收到任何源码文件"}
+    result = bootstrap.draft(
+        str(payload.get("name") or ""),
+        str(payload.get("base_url") or ""),
+        files,
+    )
+    return {
+        "ok": result.ok,
+        "summary": result.summary(),
+        "contract": result.contract,
+        "violations": result.violations,
+        "endpoint_count": result.endpoint_count,
+        "repaired": result.repaired,
+    }
+
+
+def save_contract(payload: dict) -> dict:
+    """把人工确认过的契约写进 configs/（存在则要求 force）。"""
+    from . import bootstrap
+
+    contract = payload.get("contract")
+    if not isinstance(contract, dict):
+        return {"ok": False, "error": "contract 必须是 JSON 对象"}
+    try:
+        path = bootstrap.save_contract(
+            contract, config_dir=CONFIG_DIR, force=bool(payload.get("force"))
+        )
+    except FileExistsError as exc:
+        return {"ok": False, "error": str(exc), "exists": True}
+    except Exception as exc:                                  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "name": path.stem, "path": str(path)}
+
+
+
+# ---------------------------------------------------------------------------
 # 后台运行一次循环（前端点按钮触发）
 # ---------------------------------------------------------------------------
 # 为什么是"单例 + 线程"而不是任务队列：
@@ -445,6 +503,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/report":
                 name = (query.get("name") or [""])[0]
                 return self._json(load_report(name))
+            if path == "/api/contract":
+                name = (query.get("name") or [""])[0]
+                return self._json(load_contract(name))
             if path == "/api/run/status":
                 return self._json(run_state())
             return self._json({"error": f"没有这个接口：{path}"}, 404)
@@ -457,13 +518,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:              # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path != "/api/run":
+        route = parsed.path
+        if route not in ("/api/run", "/api/contract/draft", "/api/contract/save"):
             return self._json({"error": "没有这个接口"}, 404)
         try:
             length = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
         except (ValueError, UnicodeDecodeError):
             return self._json({"error": "请求体不是合法 JSON"}, 400)
+
+        if route == "/api/contract/draft":
+            # 这一步会真的调模型（10~20 秒）：前端要显示"正在起草…"
+            result = draft_contract(payload)
+            return self._json(result, 200 if result.get("ok") else 400)
+
+        if route == "/api/contract/save":
+            result = save_contract(payload)
+            return self._json(result, 200 if result.get("ok") else 400)
+
         result = start_run(
             payload.get("target", ""),
             payload.get("n_cases", 3),

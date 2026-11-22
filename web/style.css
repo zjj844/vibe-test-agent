@@ -71,6 +71,49 @@ button.ghost {
   border: 1px solid var(--line);
   padding: 4px 10px;
 }
+button.ghost.tiny { padding: 1px 8px; font-size: 11px; }
+
+/* ---------------- 导入项目面板 ---------------- */
+.importer {
+  margin: 16px 24px 0;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ok);
+  border-radius: 10px;
+}
+.importer-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.importer-form { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.importer-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.importer-form input[type="text"], .importer-form input:not([type]), .importer-form input[type="file"] {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  min-width: 190px;
+}
+.importer-form input[type="file"] { padding: 4px 6px; font-size: 12px; }
+.small { font-size: 12px; }
+.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+
+.draft { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.draft-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+.draft-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.draft-table th, .draft-table td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; }
+.draft-table th { background: var(--panel-2); color: var(--muted); font-weight: 600; }
+.draft-table input, .draft-table select {
+  width: 100%;
+  background: #0b0e13;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  font-family: var(--mono);
+}
+.draft-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
 
 /* ---------------- 进度条 ---------------- */
 .progress {
