@@ -12,10 +12,21 @@
 
 ---
 
-## 30 秒上手（不用 API key）
+## 30 秒上手
+
+**不需要 API key 就能看到的东西**（这几样是纯确定性的，不碰模型）：
 
 ```bash
 pip install -r requirements.txt        # 只有 requests + pytest 两个依赖
+python -m pytest -q                    # 127 条离线测试（模型用替身，不联网）
+python scripts/check_contracts.py      # 契约自检
+# 也可以直接看现成的真机报告：docs/samples/REPORT-demo-buggy-defect.md
+```
+
+**完整跑一次（需要 `DEEPSEEK_API_KEY`）** —— 生成用例、评分、AI 归因这三步会**真的调用 DeepSeek**：
+
+```bash
+cp .env.example .env                   # 填入 DEEPSEEK_API_KEY（或设成环境变量）
 python demo/buggy_service.py           # 终端 1：起一个"故意带 Bug"的示例服务
 python -m selfheal.loop --target demo-buggy --n 3 --rounds 2   # 终端 2
 ```
@@ -23,8 +34,11 @@ python -m selfheal.loop --target demo-buggy --n 3 --rounds 2   # 终端 2
 跑完你会看到：**1 条通过 / 1 条系统缺陷 / 1 条契约不一致**，以及一份带缺陷清单的报告。
 示例服务里埋了两种坏法（5xx 与 200 但数据算错），工具对两者的反应不同 —— 这就是这个项目的核心。
 
+> **模型用在哪，说明白**：只有 3 处会真调模型 —— `generator`（写用例）、`critic`（按 rubric 打分）、
+> `advisor`（仅规则判不了时给建议）。探活、检索、静态校验、执行、分流、决策、报告**全是确定性代码**。
+> 服务不可达时一次模型都不调（2 秒内停手）。没有 key 也不会偷偷用假模型充数 —— 会直接报错。
+
 想测自己的项目？复制 `selfheal/configs/rag-backend.json` 改一改，**不需要改任何代码**。
-（真机生成用例需要 `DEEPSEEK_API_KEY`，见 `.env.example`）
 
 要求：**Python ≥ 3.10**（CI 在 3.10 / 3.13 上各跑一遍）。本地自检：`check.cmd`。
 
