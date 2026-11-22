@@ -1,0 +1,68 @@
+{
+  "name": "cms-portal",
+  "_comment": "桌面版 CMS（war + Tomcat 11 + JSP + MyBatis-Plus）。我在工作区里另起了一份实例跑在 8081（不动原项目目录）。登录是 Session + 图形验证码，不支持 Bearer，所以契约走『公开接口 + 鉴权边界』。",
+  "base_url": "http://127.0.0.1:8081",
+  "timeout": 15,
+  "requirements_dir": "selfheal/requirements_docs/cms-portal",
+
+  "health": { "id": "portal-list" },
+
+  "endpoints": [
+    {
+      "id": "portal-list",
+      "method": "GET",
+      "path": "/api/portal/list",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "notes": "门户文章分页列表（公开）。data 里应有 total/pageNum/pageSize/pages/list，列表元素含 articleId/categoryId/title。分页参数用 pageNum/pageSize。"
+    },
+    {
+      "id": "portal-article",
+      "method": "GET",
+      "path": "/api/portal/article/1",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "notes": "门户文章详情（公开）。data 应含 articleId/title/categoryName 等。文章不存在时应返回业务错误码，不得抛 500。"
+    },
+    {
+      "id": "portal-comments",
+      "method": "GET",
+      "path": "/api/portal/comments",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg", "data"],
+      "expect_json": { "code": 200 },
+      "params": { "articleId": 1 },
+      "notes": "文章评论列表（公开）。查询参数是 articleId；data 应为数组，元素含 commentId/articleId/userName。"
+    },
+    {
+      "id": "captcha",
+      "method": "GET",
+      "path": "/api/auth/captcha",
+      "expect_status": 200,
+      "expect_fields": [],
+      "notes": "图形验证码（公开）。返回的是 image/png 二进制，不是 JSON；同时把验证码写进 Session（登录接口依赖它）。"
+    },
+    {
+      "id": "current-anon",
+      "method": "GET",
+      "path": "/api/auth/current",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg"],
+      "expect_json": { "code": 401 },
+      "no_auth": true,
+      "notes": "鉴权边界：未登录访问当前用户信息必须被拒绝。本项目拒绝方式是 HTTP 200 + body.code=401（不是 401 状态码），且 data 必须为 null、不得泄露用户信息。"
+    },
+    {
+      "id": "stats-anon",
+      "method": "GET",
+      "path": "/api/stats/overview",
+      "expect_status": 200,
+      "expect_fields": ["code", "msg"],
+      "expect_json": { "code": 401 },
+      "no_auth": true,
+      "notes": "鉴权边界：统计接口未登录必须被拒绝（HTTP 200 + body.code=401），不得返回任何统计数据。"
+    }
+  ]
+}
