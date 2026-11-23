@@ -222,12 +222,21 @@ def run_cycle(
     # ---- 先建一次知识库（需求文档不常变，一次循环建一次就够）----
     # 每个被测项目有自己的需求文档（契约里 requirements_dir 指定）。
     # 不指定就用默认那份——但那样检索到的是"别人的需求"，等于白读。
-    knowledge = kb.RequirementKB(
-        docs_dir=target.requirements_dir
-    ) if target.requirements_dir else kb.RequirementKB()
+    # external_docs：外部规范语料（如《阿里巴巴 Java 开发手册》）。
+    # 给了它就升级为"需求 + 规范一起检索"（SQLite 持久化索引 + hybrid 检索）。
+    if target.requirements_dir or target.external_docs:
+        knowledge = kb.RequirementKB(
+            docs_dir=target.requirements_dir or kb.DEFAULT_DOCS_DIR,
+            external_dir=target.external_docs,
+        )
+    else:
+        knowledge = kb.RequirementKB()
     query = _requirement_query(target)
+    stats = knowledge.index_stats()
     cycle.notes.append(
-        f"需求库：{knowledge.doc_count} 篇 / {knowledge.chunk_count} 块；检索词 {len(query)} 字符"
+        f"需求库：{knowledge.doc_count} 篇 / {knowledge.chunk_count} 块"
+        f"（检索模式 {stats['mode']}，外部规范 {stats['external_chunks']} 块）；"
+        f"检索词 {len(query)} 字符"
     )
 
     feedback = ""          # 上一轮的失败摘要，喂给下一轮的生成器

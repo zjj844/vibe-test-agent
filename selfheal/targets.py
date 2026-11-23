@@ -152,6 +152,7 @@ class Target:
     source_file: Path | None = None        # 从哪个 json 读出来的（便于报错定位）
     auth: AuthConfig | None = None         # 需要登录的项目才有
     requirements_dir: Path | None = None   # 这个项目自己的需求文档目录（不填就用默认的）
+    external_docs: Path | None = None      # 外部规范语料目录（可选，如阿里巴巴开发手册）
 
     # ---- 按 id 找接口 ----
     def endpoint(self, endpoint_id: str) -> Endpoint | None:
@@ -207,6 +208,23 @@ def _resolve_requirements_dir(raw: str | None, config_path: Path | None) -> Path
     if not path.is_dir():
         label = config_path.name if config_path else "<内存中的契约>"
         raise TargetConfigError(f"{label} 里的 requirements_dir 不存在：{path}")
+    return path
+
+
+def _resolve_optional_dir(raw: str | None, field: str) -> Path | None:
+    """解析可选的目录字段（相对仓库根）。
+
+    与 requirements_dir 的区别：**不存在时不报错**，只是忽略。
+    为什么：外部语料（如《阿里巴巴开发手册》）是可选的增强项，
+    语料没下载好不该让整个 target 加载失败。
+    """
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.is_dir():
+        return None
     return path
 
 
@@ -289,6 +307,7 @@ def parse_target(data: dict, source_file: Path | None = None) -> Target:
         source_file=source_file,
         auth=auth,
         requirements_dir=_resolve_requirements_dir(data.get("requirements_dir"), source_file),
+        external_docs=_resolve_optional_dir(data.get("external_docs"), "external_docs"),
     )
 
 

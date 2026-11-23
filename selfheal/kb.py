@@ -79,15 +79,34 @@ class Section:
 
 @dataclass
 class RequirementKB:
+    """需求 + 外部规范的知识库。
+
+    两种工作方式（**默认行为不变**，只有给了 external_dir 才升级）：
+
+      1. 旧方式（external_dir=None）：内存 VectorStore + 向量检索
+         —— 只需要"本项目的需求文档"时够用，也是所有老测试跑的路径。
+
+      2. 新方式（给了 external_dir）：把需求文档 + 外部规范**一起**切块，
+         灌进 SQLite 持久化索引，检索走 hybrid（向量 + BM25 的 RRF 融合）。
+         —— 为什么升级：外部规范（如《阿里巴巴 Java 开发手册》）是"组织级测试基线"，
+         只有和需求文档混在一起检索，生成的用例才会带上"表必备三字段""日志保存 15 天"
+         这类通用约束。
+    """
+
     docs_dir: Path = DEFAULT_DOCS_DIR
     chunk_size: int = 300
     overlap: int = 60
     embedder: HashingEmbedder = field(default_factory=lambda: HashingEmbedder(dim=2048))
+    external_dir: Path | None = None          # 外部规范语料目录（可选）
+    mode: str = "hybrid"                      # vector / bm25 / hybrid（仅索引模式生效）
+    index_db: Path | None = None              # 索引落盘位置（默认 .index/kb.sqlite3）
 
     def __post_init__(self) -> None:
         self.store = VectorStore()
         self.retriever = Retriever(self.store, self.embedder, top_k=3)
         self.sections: list[Section] = []
+        self.index = None                     # 升级后是 vectordb.VectorIndex
+        self.external_chunks = 0
         self._build()
 
     # ---- 解析：按标题切模块 ----
@@ -122,21 +141,62 @@ class RequirementKB:
 
         return [Section(doc_id, doc_title, doc_title, 1, text)]
 
-    def _build(self) -> None:
-        all_chunks = []
-        for path in sorted(Path(self.docs_dir).glob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            doc_id = path.stem
-            doc_title = text.strip().splitlines()[0].lstrip("# ").strip()
+    # ---- 建库 ----
+    def _collect(self, base_dir: Path, prefix: str = "", recursive: bool = False) -> list:
+        """把一个目录下的 md 切块，返回 chunk 列表（同时记 section）。
+
+        为什么 external 要 recursive、requirements 不递归：
+          · 需求文档目录 = "这个项目的一份/几份文档"，平铺就好，
+            递归反而会把"别的项目的需求"误收进来（实测：默认目录下按项目分了子目录，
+            递归后 doc_count 从 3 变成 8，检索就串项目了）
+          · 外部语料 = 按来源分层存放（`corpus_external/alibaba-p3c/`、`aliyun-openapi/`），
+            不递归会**一条都读不到**——实测踩过，external_chunks 一直是 0
+        """
+        chunks = []
+        base = Path(base_dir)
+        pattern_iter = base.rglob("*.md") if recursive else base.glob("*.md")
+        for path in sorted(pattern_iter):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            rel = path.relative_to(base)
+            stem = f"{rel.parent.name}/{path.stem}" if len(rel.parts) > 1 else path.stem
+            doc_id = f"{prefix}{stem}"
+            doc_title = text.strip().splitlines()[0].lstrip("# ").strip() if text.strip() else path.stem
             for idx, section in enumerate(self._split_sections(doc_id, doc_title, text)):
                 self.sections.append(section)
                 # 子块 id 里带上小节序号，方便回溯"这条用例出自哪一节"
                 sub_id = f"{doc_id}#s{idx:02d}"
-                all_chunks.extend(
+                chunks.extend(
                     chunk_text(section.text, sub_id, chunk_size=self.chunk_size, overlap=self.overlap)
                 )
-        vectors = [self.embedder.embed(c.text) for c in all_chunks]
-        self.store.add(all_chunks, vectors)
+        return chunks
+
+    def _build(self) -> None:
+        req_chunks = self._collect(Path(self.docs_dir))
+        vectors = [self.embedder.embed(c.text) for c in req_chunks]
+        self.store.add(req_chunks, vectors)
+
+        if not self.external_dir:
+            return                                 # 旧路径：只用内存版，行为完全不变
+
+        # 升级路径：需求 + 外部规范一起进持久化索引
+        from . import vectordb
+
+        ext_dir = Path(self.external_dir)
+        ext_chunks = (
+            self._collect(ext_dir, prefix="规范·", recursive=True) if ext_dir.is_dir() else []
+        )
+        self.external_chunks = len(ext_chunks)
+
+        db_path = self.index_db or (
+            Path(__file__).resolve().parent.parent / ".index" / "kb.sqlite3"
+        )
+        self.index = vectordb.VectorIndex(db_path, embedder=self.embedder)
+
+        records = [
+            {"doc_id": c.doc_id, "section": "", "text": c.text}
+            for c in (req_chunks + ext_chunks)
+        ]
+        self.index.rebuild(records)
 
     # ---- 对外接口 ----
     @property
@@ -145,10 +205,46 @@ class RequirementKB:
 
     @property
     def chunk_count(self) -> int:
+        if self.index is not None:
+            return self.index.stats()["chunks"]
         return len(self.store)
 
     def search(self, query: str, top_k: int = 3) -> list[dict]:
-        return self.retriever.search(query, top_k=top_k)
+        if self.index is None:
+            return self.retriever.search(query, top_k=top_k)
+
+        # 混检时给外部规范留一个名额
+        # ------------------------------------------------------------------
+        # 为什么需要："给需求文档写的查询词"（接口名/业务含义）天然更贴近需求文档，
+        # 规范文档（讲建表/日志/命名）几乎永远排不进 top-3 —— 实测就是这样：
+        # 外部规范明明在索引里，读需求却一条都没检索到。
+        # 所以显式留配额：1 条规范 + 其余需求。这也是"组织规范必须参与"的产品判断，
+        # 不是调参技巧。
+        if not self.external_chunks or top_k < 2:
+            return [h.as_dict() for h in self.index.search(query, k=top_k, mode=self.mode)]
+
+        pool = [h for h in self.index.search(query, k=max(top_k * 4, 12), mode=self.mode)]
+        ext = [h for h in pool if h.doc_id.startswith("规范·")]
+        req = [h for h in pool if not h.doc_id.startswith("规范·")]
+
+        # 顺序讲究：需求在前（它决定"测什么"），规范在后当补充约束
+        chosen = req[: max(top_k - 1, 0)] + ext[:1]
+        if len(chosen) < top_k:                    # 名额没填满就用剩下的补齐
+            rest = [h for h in pool if h not in chosen]
+            chosen += rest[: top_k - len(chosen)]
+        return [h.as_dict() for h in chosen]
+
+    def index_stats(self) -> dict:
+        """索引概况（日志/报告用）：块数、文档数、外部语料块数、检索模式。"""
+        stats = {
+            "mode": "memory" if self.index is None else self.mode,
+            "chunks": self.chunk_count,
+            "docs": self.doc_count,
+            "external_chunks": self.external_chunks,
+        }
+        if self.index is not None:
+            stats.update({k: v for k, v in self.index.stats().items() if k in ("db_bytes", "dim")})
+        return stats
 
     def tree(self) -> str:
         """模块结构树：把"AI 把需求切成了什么样"摊开给人核对。"""
@@ -157,7 +253,8 @@ class RequirementKB:
         for s in self.sections:
             if s.doc_id != current_doc:
                 current_doc = s.doc_id
-                lines.append(f"📄 {s.doc_title}  ({s.doc_id})")
+                mark = "📚" if s.doc_id.startswith("规范·") else "📄"
+                lines.append(f"{mark} {s.doc_title}  ({s.doc_id})")
             indent = "   " * (s.level - 1)
             lines.append(f"{indent}├─ {s.title}")
         return "\n".join(lines)

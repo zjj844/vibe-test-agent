@@ -118,5 +118,6 @@
     "header": "Authorization",
     "prefix": "Bearer "
   },
-  "requirements_dir": "selfheal/requirements_docs/cms"
+  "requirements_dir": "selfheal/requirements_docs/cms",
+  "external_docs": "corpus_external"
 }

@@ -27,6 +27,10 @@ class FakeKB:
     def search(self, query, top_k=3):
         return [{"chunk_id": "REQ-001#s00", "text": "接口应返回 answer 字段"}]
 
+    def index_stats(self):
+        # loop 会记录一行「需求库：… 检索模式 …」，替身也要提供这个方法
+        return {"mode": "memory", "chunks": 3, "docs": 1, "external_chunks": 0}
+
 
 def _target() -> targets.Target:
     ep = targets.Endpoint(
