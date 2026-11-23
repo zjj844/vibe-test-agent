@@ -188,6 +188,102 @@ def validate_contract(contract: dict) -> tuple[bool, list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# 鉴权识别 + 契约体检（实测踩过的坑）
+# ---------------------------------------------------------------------------
+# 现象（真实发生过）：起草出的 18 个接口 notes 里都写着"需要登录"，
+# 但契约里**没有 auth 配置** → 每个接口都拿到 body.code=401 → 用例断言失败
+# → 两轮自愈全在改断言 → 最终 gave_up。0% 通过率，看起来像"服务坏了"。
+#
+# 根因不是模型没识别（它写进 notes 了），而是**起草流程没把"要登录"翻译成配置**。
+# 所以这里补两件事：
+#   1. detect_auth()：源码里有鉴权痕迹 + 契约里有登录接口 → 自动补 auth 草案
+#   2. contract_warnings()：保存前做体检，把"大概率跑不通"的配置问题指出来
+_AUTH_HINTS = (
+    "Authorization",
+    "Bearer",
+    "TokenManager",
+    "token",
+    "JWT",
+    "jwt",
+    "session",
+    "@RequirePermission",
+)
+
+_LOGIN_HINTS = ("login", "signin", "sign-in", "auth-login", "token")
+
+
+def detect_auth(source: str, contract: dict) -> dict | None:
+    """判断"这个项目需要登录态吗"，需要就返回 auth 草案。
+
+    保守判断：源码出现 Authorization/Bearer/JWT/TokenManager 等痕迹，
+    **且**契约里有像"登录"的接口，才返回配置。宁可漏判，不要瞎猜。
+    """
+    if not source or not contract:
+        return None
+    endpoints = contract.get("endpoints") or []
+    if not endpoints:
+        return None
+    if not any(hint in source for hint in _AUTH_HINTS):
+        return None
+
+    login_ep = next(
+        (ep for ep in endpoints if any(h in ep["id"].lower() for h in _LOGIN_HINTS)), None
+    )
+    if login_ep is None:
+        return None
+    return {
+        "endpoint": login_ep["id"],
+        "token_path": "data.token",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+    }
+
+
+def contract_warnings(contract: dict) -> list[str]:
+    """契约体检：保存前指出"大概率跑不通"的配置问题。
+
+    为什么不阻断保存：契约是人的东西，工具只负责提醒。
+    但**不提醒就是坑** —— 用户会跑出 0% 通过率还不知道为什么。
+    """
+    warns: list[str] = []
+    endpoints = contract.get("endpoints") or []
+    auth = contract.get("auth")
+
+    need_login = [
+        ep for ep in endpoints
+        if "需要登录" in (ep.get("notes") or "") or "登录态" in (ep.get("notes") or "")
+    ]
+    if need_login and not auth:
+        warns.append(
+            f"{len(need_login)} 个接口的说明里写着「需要登录」，但契约没有 auth 配置 → "
+            f"这些接口会拿到 code=401（被当成断言失败，白白消耗自愈轮数）"
+        )
+
+    if auth:
+        login_id = auth.get("endpoint")
+        login_ep = next((ep for ep in endpoints if ep["id"] == login_id), None)
+        if login_ep is None:
+            warns.append(f"auth.endpoint='{login_id}' 不在接口列表里")
+        elif not login_ep.get("body"):
+            warns.append(
+                f"登录接口 `{login_id}` 没有请求体(body)：裸调用大概率返回 400/500，"
+                f'建议填上真实账号密码，如 {{"username": "admin", "password": "123456"}}'
+            )
+        if not auth.get("token_path"):
+            warns.append("auth.token_path 为空：无法从登录响应里取 token（常见值 data.token）")
+
+    health_id = (contract.get("health") or {}).get("id")
+    if health_id:
+        health_ep = next((ep for ep in endpoints if ep["id"] == health_id), None)
+        if health_ep is not None and (health_ep.get("method") or "GET").upper() != "GET":
+            warns.append(
+                f"health 指向 `{health_id}`（{health_ep.get('method')}）："
+                f"探活最好用一个不需要登录、不需要参数的 GET 接口"
+            )
+    return warns
+
+
+# ---------------------------------------------------------------------------
 # 起草（唯一调模型的地方）
 # ---------------------------------------------------------------------------
 def build_messages(name: str, base_url: str, source: str) -> list[dict]:
@@ -236,6 +332,16 @@ def draft(
             violations = [f"模型没给出合法 JSON：{exc}"]
         else:
             contract = _normalize(parsed, name, base_url)
+            # 起草阶段就把鉴权翻译成配置：这一步是踩过坑之后加的 ——
+            # 否则 notes 里写着"需要登录"、契约里却没有 auth，跑起来全是 401。
+            if not contract.get("auth"):
+                guessed = detect_auth(source, contract)
+                if guessed:
+                    contract["auth"] = guessed
+                    contract["_auth_note"] = (
+                        "自动推断：源码里有 Authorization/Bearer 等痕迹。"
+                        "请核对 login 接口的 body 是否填了真实账号密码。"
+                    )
             ok, violations = validate_contract(contract)
             if ok:
                 return DraftResult(

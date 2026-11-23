@@ -364,16 +364,24 @@ def draft_contract(payload: dict) -> dict:
         "violations": result.violations,
         "endpoint_count": result.endpoint_count,
         "repaired": result.repaired,
+        # 体检提示：草案"形状合法"不等于"跑得通"（例如缺 auth 会全 401）
+        "warnings": bootstrap.contract_warnings(result.contract) if result.contract else [],
     }
 
 
 def save_contract(payload: dict) -> dict:
-    """把人工确认过的契约写进 configs/（存在则要求 force）。"""
+    """把人工确认过的契约写进 configs/（存在则要求 force）。
+
+    返回里带 `warnings`：**不阻断保存**，但把"大概率跑不通"的配置问题摆出来。
+    实测教训：起草出的契约没有 auth，18 个接口里一半是 401，跑完 0% 通过率，
+    用户只会说"好像出问题了" —— 提示必须在保存前就给。
+    """
     from . import bootstrap
 
     contract = payload.get("contract")
     if not isinstance(contract, dict):
         return {"ok": False, "error": "contract 必须是 JSON 对象"}
+    warnings = bootstrap.contract_warnings(contract)
     try:
         path = bootstrap.save_contract(
             contract, config_dir=CONFIG_DIR, force=bool(payload.get("force"))
@@ -382,7 +390,12 @@ def save_contract(payload: dict) -> dict:
         return {"ok": False, "error": str(exc), "exists": True}
     except Exception as exc:                                  # noqa: BLE001
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-    return {"ok": True, "name": path.stem, "path": str(path)}
+    return {
+        "ok": True,
+        "name": path.stem,
+        "path": str(path),
+        "warnings": warnings,
+    }
 
 
 # ---------------------------------------------------------------------------

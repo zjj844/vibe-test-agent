@@ -213,6 +213,9 @@ const app = createApp({
         }
         this.imp.contract = data.contract;
         this.imp.message = data.summary || "起草完成";
+        if (data.warnings && data.warnings.length) {
+          this.imp.message += " ｜ ⚠️ " + data.warnings.join("；");
+        }
       } catch (e) {
         this.imp.error = "起草请求失败：" + e.message;
       } finally {
@@ -295,6 +298,9 @@ const app = createApp({
           return;
         }
         this.imp.message = `已保存为契约：${data.name}.json —— 现在可以在上面下拉框里选它并运行`;
+        if (data.warnings && data.warnings.length) {
+          this.imp.message += "\n⚠️ 体检提示：" + data.warnings.join("\n⚠️ ");
+        }
         await this.loadTargets();
         this.form.target = data.name;
       } catch (e) {

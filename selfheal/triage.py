@@ -89,7 +89,20 @@ RULES: tuple[tuple[str, FailureKind, Action, str], ...] = (
         Action.STOP,
         "连不上被测服务：先起服务，再谈测试（此时改测试毫无意义）",
     ),
-    # ② 系统 Bug：接口真的坏了 —— 断言里出现 5xx 也算
+    # ②' 业务层 5xx：**HTTP 通了（2xx）**，但响应体里 code=5xx
+    #
+    # 为什么必须单列、且排在 ② 之前：很多国内后端的约定是"业务错误用 body.code 表达，
+    # HTTP 仍返 200"。实测踩到：契约里 login 接口没填 body → 后端抛异常被全局
+    # 异常处理器兜成 {"code":500,"msg":"系统繁忙"} → 断言消息是 `assert 500 == 200`，
+    # 被 ② 判成"HTTP 5xx 系统缺陷"，于是报告把责任推给服务端，而真正原因是
+    # **请求参数/契约不完整**。所以：只要消息里明确写着"响应体 code=5xx"，就走这一条。
+    (
+        r"响应体 code=5\d\d",
+        FailureKind.SYSTEM_BUG,
+        Action.REPORT_DEFECT,
+        "HTTP 通了但响应体业务码是 5xx（多为后端异常被兜底）：先核对请求参数/契约是否完整，再判定是否为缺陷",
+    ),
+    # ② 系统 Bug：接口真的坏了 —— HTTP 5xx
     (
         r"Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout|"
         r"HTTP 5\d\d|status[\s_]*code[\s_]*[=:][\s_]*5\d\d|assert 5\d\d ==",

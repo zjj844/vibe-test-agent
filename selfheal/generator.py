@@ -85,14 +85,26 @@ def check_contract(endpoint, r):
     为什么把它放进模板（而不是让模型每次自己写）：
     这三条是**每条用例都要做的机械检查**，让模型重复写只会写漏、写错。
     和"模板头由我们写死"是同一个道理：不变的交给代码，变化的交给模型。
+
+    为什么失败消息必须带上 HTTP 状态码 **和** 响应体 code：
+    本项目（以及很多国内后端）的约定是"业务错误用 body.code 表达，HTTP 仍返 200"。
+    如果消息里只有 `assert 500 == 200`，分流模块会判成"HTTP 5xx 系统缺陷"，
+    而真相可能是业务码 401/500 —— 归因就错了。把两个数字都写进消息，
+    人和规则才分得清"接口真 5xx"和"业务层拒绝"。
     """
+    body = r.json_body if isinstance(r.json_body, dict) else {{}}
+    ctx = (
+        f"（HTTP {{r.status}} · 响应体 code={{body.get('code')}} · "
+        f"msg={{body.get('msg')!r}}）"
+    )
+
     assert r.status == endpoint.expect_status, (
-        f"状态码 {{r.status}} != 契约 {{endpoint.expect_status}}"
+        f"状态码 {{r.status}} != 契约 {{endpoint.expect_status}}{{ctx}}"
     )
     missing = r.missing_fields(endpoint.expect_fields)
-    assert not missing, f"响应缺字段 {{missing}}"
+    assert not missing, f"响应缺字段 {{missing}}{{ctx}}"
     bad = r.json_mismatches(endpoint.expect_json)
-    assert not bad, f"响应字段值与契约不符：{{bad}}"
+    assert not bad, f"响应字段值与契约不符：{{bad}}{{ctx}}"
 
 '''
 
