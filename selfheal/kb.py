@@ -20,8 +20,52 @@ from .retrieval import Retriever
 
 DEFAULT_DOCS_DIR = Path(__file__).resolve().parent / "requirements_docs"
 
-# 只认二级/三级标题：一级标题是文档名，四级以下太细
+# ---------------------------------------------------------------------------
+# 分节：优先认 Markdown 标题，其次认"中文式编号标题"
+# ---------------------------------------------------------------------------
+# 为什么不能只认 `##`：
+# 实测踩到 —— 用户粘进来的 PRD 长这样（国内团队很常见）：
+#
+#     SSM 企业级CMS内容管理系统 验收需求（FR）
+#     FR-1 登录返回 token 与权限码
+#     POST /api/auth/login 成功时 code=200 ...
+#     FR-2 注册默认 viewer
+#     ...
+#
+# 一条 `##` 都没有。只认 Markdown 标题的话，整篇会被当成"一个巨大的模块"，
+# 然后按 300 字硬切 —— 一条需求被劈成两半，检索必然串味。
+# 所以这里额外认三种编号式标题：`FR-1 xxx` / `1. xxx` / `一、xxx`。
 _HEADING = re.compile(r"^(#{2,3})\s+(.+?)\s*$", re.MULTILINE)
+
+_NUMBERED_HEADING = re.compile(
+    r"^(?:"
+    r"([A-Z]{2,6}-\d{1,3})"          # FR-1 / NFR-2 / AC-3
+    r"|(\d{1,2}\.\d{0,2})"           # 1. / 1.2
+    r"|([一二三四五六七八九十]{1,3})、"  # 一、 / 十二、
+    r")\s*(.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _split_numbered(text: str) -> list[tuple[int, str, str]]:
+    """按编号式标题切节，返回 [(level, title, body)]。
+
+    只在"整篇没有 Markdown 标题"时才用 —— 有 `##` 就优先信 Markdown，
+    避免把正文里的"1."当成标题（比如列表编号）。
+    """
+    matches = list(_NUMBERED_HEADING.finditer(text))
+    if not matches:
+        return []
+    out: list[tuple[int, str, str]] = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        title = m.group(4) or ""
+        prefix = m.group(1) or m.group(2) or m.group(3) or ""
+        full_title = f"{prefix} {title}".strip()
+        out.append((2, full_title, text[start:end].strip()))
+    return out
+
 
 
 @dataclass
@@ -50,17 +94,33 @@ class RequirementKB:
     @staticmethod
     def _split_sections(doc_id: str, doc_title: str, text: str) -> list[Section]:
         matches = list(_HEADING.finditer(text))
-        if not matches:
-            return [Section(doc_id, doc_title, doc_title, 1, text)]
+        if matches:
+            sections: list[Section] = []
+            for i, m in enumerate(matches):
+                start = m.start()
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                sections.append(
+                    Section(doc_id, doc_title, m.group(2).strip(), len(m.group(1)),
+                            text[start:end].strip())
+                )
+            return sections
 
-        sections: list[Section] = []
-        for i, m in enumerate(matches):
-            start = m.start()
-            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            sections.append(
-                Section(doc_id, doc_title, m.group(2).strip(), len(m.group(1)), text[start:end].strip())
+        # 没有 Markdown 标题 → 试试"中文式编号标题"（FR-1 / 1. / 一、）
+        numbered = _split_numbered(text)
+        if numbered:
+            # 第一个编号之前的内容（文档标题/验收口径）单独成节，别丢掉
+            head_end = text.find(numbered[0][2][:20]) if numbered else 0
+            sections = []
+            head = text[:head_end].strip() if head_end > 0 else ""
+            if head:
+                sections.append(Section(doc_id, doc_title, "概述", 1, head))
+            sections.extend(
+                Section(doc_id, doc_title, title, level, body)
+                for level, title, body in numbered
             )
-        return sections
+            return sections
+
+        return [Section(doc_id, doc_title, doc_title, 1, text)]
 
     def _build(self) -> None:
         all_chunks = []

@@ -97,7 +97,7 @@ RULES: tuple[tuple[str, FailureKind, Action, str], ...] = (
     # 被 ② 判成"HTTP 5xx 系统缺陷"，于是报告把责任推给服务端，而真正原因是
     # **请求参数/契约不完整**。所以：只要消息里明确写着"响应体 code=5xx"，就走这一条。
     (
-        r"响应体 code=5\d\d",
+        r"响应体 code=5\d\d|[\"']code[\"']\s*:\s*5\d\d|(?<![A-Za-z])code\s*=\s*5\d\d",
         FailureKind.SYSTEM_BUG,
         Action.REPORT_DEFECT,
         "HTTP 通了但响应体业务码是 5xx（多为后端异常被兜底）：先核对请求参数/契约是否完整，再判定是否为缺陷",

@@ -132,6 +132,35 @@ def test_no_warning_when_contract_is_sane():
     assert bootstrap.contract_warnings(contract) == []
 
 
+def test_warning_for_write_endpoint_without_body():
+    """本次事故的第二根因：POST 接口没 body → 后端 DTO 校验失败 → code=500。"""
+    contract = _contract(
+        health={"id": "article-page"},
+        auth={"endpoint": "auth-login", "token_path": "data.token"},
+        endpoints=[
+            {"id": "auth-login", "method": "POST", "path": "/api/auth/login",
+             "body": {"username": "admin", "password": "123456"}, "notes": ""},
+            {"id": "article-add", "method": "POST", "path": "/api/article",
+             "expect_status": 200, "notes": "新增文章"},
+        ],
+    )
+    warns = bootstrap.contract_warnings(contract)
+    assert any("没有请求体" in w and "article-add" in w for w in warns)
+
+
+def test_business_code_5xx_in_model_assertion_is_classified_as_business_error():
+    """模型自己写的断言消息形如 {'code': 500} —— 也要认出来是业务码，不是 HTTP 5xx。"""
+    from selfheal import triage
+    from selfheal.triage import Action, FailureKind
+
+    case = triage.classify_case(_case(
+        "AssertionError: 新增文章应成功，实际返回：{'code': 500, 'msg': '系统繁忙'}\nassert 500 == 200"
+    ))
+    assert case.kind is FailureKind.SYSTEM_BUG
+    assert case.action is Action.REPORT_DEFECT
+    assert "请求参数" in case.reason
+
+
 # ---------------------------------------------------------------------------
 # 模板断言消息：必须带 HTTP 状态码 + 响应体 code
 # ---------------------------------------------------------------------------

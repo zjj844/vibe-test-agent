@@ -280,6 +280,21 @@ def contract_warnings(contract: dict) -> list[str]:
                 f"health 指向 `{health_id}`（{health_ep.get('method')}）："
                 f"探活最好用一个不需要登录、不需要参数的 GET 接口"
             )
+
+    # 写操作的 body：这是本次事故的第二个根因 —— 契约里 article-add 没有 body，
+    # 生成器照着裸调用 → 后端 DTO 校验失败/抛异常 → {"code":500,"系统繁忙"}。
+    # 工具**不应该替人编业务参数**，但必须提醒"这类接口大概率会 500/400"。
+    write_without_body = [
+        ep for ep in endpoints
+        if (ep.get("method") or "GET").upper() in ("POST", "PUT", "PATCH", "DELETE")
+        and not ep.get("body")
+    ]
+    if write_without_body:
+        names = "、".join(ep["id"] for ep in write_without_body[:5])
+        warns.append(
+            f"{len(write_without_body)} 个写操作接口没有请求体(body)：{names} —— "
+            f"裸调用通常会得到 400/500，建议补上真实参数，或先从契约里删掉"
+        )
     return warns
 
 

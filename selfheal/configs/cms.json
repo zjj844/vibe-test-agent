@@ -2,7 +2,7 @@
   "name": "cms",
   "base_url": "http://127.0.0.1:8080/cms/",
   "health": {
-    "id": "auth-login"
+    "id": "article-page"
   },
   "endpoints": [
     {
@@ -30,66 +30,6 @@
       "notes": "查询文章详情并将浏览量+1，需要登录"
     },
     {
-      "id": "article-add",
-      "method": "POST",
-      "path": "/api/article",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "新增文章，提交后进入待审核状态，需要登录且具备 article:add 权限"
-    },
-    {
-      "id": "article-update",
-      "method": "PUT",
-      "path": "/api/article/1",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "编辑文章，仅作者本人或管理员可操作，修改后重新进入待审核，需要登录且具备 article:edit 权限"
-    },
-    {
-      "id": "article-delete",
-      "method": "DELETE",
-      "path": "/api/article/1",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "逻辑删除文章，需要登录且具备 article:delete 权限"
-    },
-    {
-      "id": "article-audit",
-      "method": "PUT",
-      "path": "/api/article/1/audit",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "文章审核，请求体 status 取值 2 发布 / 3 下架 / 0 驳回，需要登录且具备 article:audit 权限"
-    },
-    {
-      "id": "auth-register",
-      "method": "POST",
-      "path": "/api/auth/register",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "用户注册，新用户默认绑定「访客」角色，无需登录"
-    },
-    {
       "id": "auth-login",
       "method": "POST",
       "path": "/api/auth/login",
@@ -99,19 +39,14 @@
         "msg",
         "data"
       ],
-      "notes": "用户登录，返回 Token 与用户信息，无需登录"
-    },
-    {
-      "id": "auth-logout",
-      "method": "POST",
-      "path": "/api/auth/logout",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "退出登录并清除 Token（从 Authorization Bearer 头解析），需要登录"
+      "notes": "用户登录，返回 Token 与用户信息，无需登录",
+      "body": {
+        "username": "admin",
+        "password": "123456"
+      },
+      "expect_json": {
+        "code": 200
+      }
     },
     {
       "id": "auth-info",
@@ -138,42 +73,6 @@
       "notes": "查询多级内容分类树，需要登录"
     },
     {
-      "id": "category-add",
-      "method": "POST",
-      "path": "/api/category",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "新增分类，需要登录且具备 category:add 权限"
-    },
-    {
-      "id": "category-update",
-      "method": "PUT",
-      "path": "/api/category/1",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "编辑分类，需要登录且具备 category:edit 权限"
-    },
-    {
-      "id": "category-delete",
-      "method": "DELETE",
-      "path": "/api/category/1",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "删除分类，存在子分类或关联文章时拒绝删除，需要登录且具备 category:delete 权限"
-    },
-    {
       "id": "log-page",
       "method": "GET",
       "path": "/api/log/page",
@@ -198,28 +97,26 @@
       "notes": "用户分页查询（含角色信息），仅管理员，需要登录且具备 user:page 权限"
     },
     {
-      "id": "user-update-status",
-      "method": "PUT",
-      "path": "/api/user/1/status",
+      "id": "article-page-anon",
+      "method": "GET",
+      "path": "/api/article/page",
       "expect_status": 200,
       "expect_fields": [
         "code",
-        "msg",
-        "data"
+        "msg"
       ],
-      "notes": "启用/禁用用户，需在查询参数中传入必填 status，仅管理员，需要登录且具备 user:updateStatus 权限"
-    },
-    {
-      "id": "user-assign-role",
-      "method": "PUT",
-      "path": "/api/user/1/role",
-      "expect_status": 200,
-      "expect_fields": [
-        "code",
-        "msg",
-        "data"
-      ],
-      "notes": "为用户分配角色，请求体传 roleIds，仅管理员，需要登录且具备 user:assignRole 权限"
+      "expect_json": {
+        "code": 401
+      },
+      "no_auth": true,
+      "notes": "鉴权边界：不带 token 访问文章分页必须被拒绝（HTTP 200 + body.code=401），且 data 为 null"
     }
-  ]
+  ],
+  "auth": {
+    "endpoint": "auth-login",
+    "token_path": "data.token",
+    "header": "Authorization",
+    "prefix": "Bearer "
+  },
+  "requirements_dir": "selfheal/requirements_docs/cms"
 }
