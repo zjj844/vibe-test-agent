@@ -1,0 +1,225 @@
+{
+  "name": "cms1",
+  "base_url": "http://127.0.0.1:8080/cms/",
+  "health": {
+    "id": "article-page"
+  },
+  "endpoints": [
+    {
+      "id": "auth-register",
+      "method": "POST",
+      "path": "/api/auth/register",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "用户注册，默认绑定「访客」角色，无需登录，用户名重复会失败"
+    },
+    {
+      "id": "auth-login",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "用户登录，返回 Token 与用户信息，无需登录，账号或密码错误会失败"
+    },
+    {
+      "id": "auth-logout",
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "退出登录，需要登录，从 Authorization: Bearer 头中解析并移除 Token"
+    },
+    {
+      "id": "auth-info",
+      "method": "GET",
+      "path": "/api/auth/info",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "获取当前登录用户信息（含角色与权限编码），需要登录"
+    },
+    {
+      "id": "article-page",
+      "method": "GET",
+      "path": "/api/article/page",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "文章分页查询，支持标题模糊/分类/状态组合条件，需要登录，可作为健康检查接口"
+    },
+    {
+      "id": "article-detail",
+      "method": "GET",
+      "path": "/api/article/1",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "文章详情，每次访问浏览量 +1，需要登录，文章不存在时失败"
+    },
+    {
+      "id": "article-add",
+      "method": "POST",
+      "path": "/api/article",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "新增文章，提交后进入待审核状态，需要登录且具备 article:add 权限"
+    },
+    {
+      "id": "article-update",
+      "method": "PUT",
+      "path": "/api/article/1",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "编辑文章，仅作者本人或管理员可操作，修改后重新进入待审核，需要登录且具备 article:edit 权限"
+    },
+    {
+      "id": "article-delete",
+      "method": "DELETE",
+      "path": "/api/article/1",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "逻辑删除文章，需要登录且具备 article:delete 权限"
+    },
+    {
+      "id": "article-audit",
+      "method": "PUT",
+      "path": "/api/article/1/audit",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "文章审核，审核状态 2 发布 / 3 下架 / 0 驳回，需要登录且具备 article:audit 权限"
+    },
+    {
+      "id": "category-tree",
+      "method": "GET",
+      "path": "/api/category/tree",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "查询多级分类树，需要登录"
+    },
+    {
+      "id": "category-add",
+      "method": "POST",
+      "path": "/api/category",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "新增分类，需要登录且具备 category:add 权限"
+    },
+    {
+      "id": "category-update",
+      "method": "PUT",
+      "path": "/api/category/1",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "编辑分类，需要登录且具备 category:edit 权限"
+    },
+    {
+      "id": "category-delete",
+      "method": "DELETE",
+      "path": "/api/category/1",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "删除分类，存在子分类或关联文章时拒绝删除，需要登录且具备 category:delete 权限"
+    },
+    {
+      "id": "log-page",
+      "method": "GET",
+      "path": "/api/log/page",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "操作日志分页查询，支持按用户名/模块/内容关键字过滤，需要登录且具备 log:page 权限"
+    },
+    {
+      "id": "user-page",
+      "method": "GET",
+      "path": "/api/user/page",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "用户分页查询（含角色），仅管理员，需要登录且具备 user:page 权限"
+    },
+    {
+      "id": "user-update-status",
+      "method": "PUT",
+      "path": "/api/user/1/status",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "启用/禁用用户，status 以 query 参数传入，需要登录且具备 user:updateStatus 权限"
+    },
+    {
+      "id": "user-assign-role",
+      "method": "PUT",
+      "path": "/api/user/1/role",
+      "expect_status": 200,
+      "expect_fields": [
+        "code",
+        "msg",
+        "data"
+      ],
+      "notes": "为用户分配角色，请求体传 roleIds，需要登录且具备 user:assignRole 权限"
+    }
+  ]
+}

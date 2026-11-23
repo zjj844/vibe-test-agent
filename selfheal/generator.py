@@ -294,6 +294,23 @@ def validate_code(code: str, target: Target) -> tuple[bool, list[str], int]:
 # ---------------------------------------------------------------------------
 # 生成（含 1 次有界重试）
 # ---------------------------------------------------------------------------
+def _slim_messages(messages: list[dict], keep_recent: int = 1) -> list[dict]:
+    """把过长的历史压一压，给"推理"留出 token 预算。
+
+    什么时候用：模型返回空正文（思考把预算吃光）时的第二轮尝试。
+    为什么截而不是删：删掉"上一版代码 + 失败摘要"就等于让模型从零开始，
+    那这一轮重写就白做了；截断到关键片段仍然保留了"上次错在哪"的信息。
+    """
+    out: list[dict] = []
+    for i, msg in enumerate(messages):
+        content = msg.get("content") or ""
+        limit = 2500 if msg.get("role") == "user" else 1200
+        if len(content) > limit:
+            content = content[:limit] + "\n…（内容已截断以节省 token）"
+        out.append({"role": msg.get("role", "user"), "content": content})
+    return out
+
+
 def generate(
     target: Target,
     requirements: list[dict] | None = None,
@@ -318,7 +335,11 @@ def generate(
     raw = ""
 
     for attempt in range(max_repair + 1):
-        raw = llm_client.chat_for("gen", messages, max_tokens=8000)
+        try:
+            raw = llm_client.chat_for("gen", messages)
+        except llm_client.EmptyContentError:
+            # 推理模型把预算吃光：先精简历史再试一次（chat_for 里已放大过预算）
+            raw = llm_client.chat_for("gen", _slim_messages(messages))
         code = extract_code(raw)
         ok, violations, count = validate_code(code, target)
         if ok:

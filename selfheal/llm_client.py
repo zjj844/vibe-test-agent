@@ -21,6 +21,21 @@ from .env import urllib_opener
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-chat"
 
+# 生成用例的 token 预算（可用环境变量覆盖）。
+# 为什么要单独一个常量：实测"第 2 轮生成"的提示词比第 1 轮大得多
+# （system 里带需求+规范片段，再加一轮"上一版代码 + 失败摘要"），
+# 推理模型的思考长度随输入复杂度上升 → 8000 会被思考吃光，正文为空。
+GEN_MAX_TOKENS = int(os.getenv("QA_GEN_MAX_TOKENS") or 14000)
+GEN_MAX_TOKENS_RETRY = 32000          # 空正文时放大到多少再试一次
+
+
+class EmptyContentError(RuntimeError):
+    """模型返回了空正文（通常是推理把预算吃光）。
+
+    单独一个异常类型，是为了让上层能**针对性地重试**：
+    "空正文"是可以用更大预算/更短提示词救回来的，别的错误不行。
+    """
+
 
 def available() -> bool:
     return bool(os.getenv("DEEPSEEK_API_KEY"))
@@ -47,11 +62,24 @@ def role_model(role: str = "gen") -> str:
     return os.getenv("QA_GEN_MODEL") or os.getenv("DEEPSEEK_FAST_MODEL") or "deepseek-flash"
 
 
-def chat_for(role: str, messages: list[dict], max_tokens: int = 8000) -> str:
-    """按角色选模型 + 账号没有该模型时自动回退到 DEEPSEEK_MODEL。"""
+def chat_for(role: str, messages: list[dict], max_tokens: int | None = None) -> str:
+    """按角色选模型 + 账号没有该模型时回退 + **空正文自动放大预算重试一次**。
+
+    为什么要这一层兜底（实测踩到）：
+    第 2 轮生成的提示词更长 → 推理模型思考更久 → 8000 预算被思考吃光 → 正文为空，
+    整个循环以"生成失败"结束。这种失败**可以救**：把预算放大再试一次就大概率成功，
+    所以放在这里统一处理，而不是让每个调用方各自写一遍。
+    """
+    if max_tokens is None:
+        max_tokens = GEN_MAX_TOKENS if role == "gen" else 6000
     preferred = role_model(role)
+
     try:
         return chat(messages, model=preferred, max_tokens=max_tokens)
+    except EmptyContentError:
+        # 放大预算重试一次（上限 32000）
+        bigger = min(max_tokens * 2, GEN_MAX_TOKENS_RETRY)
+        return chat(messages, model=preferred, max_tokens=bigger)
     except RuntimeError as exc:
         if "HTTP 4" in str(exc) and preferred != model_name():
             # 账号没开放这个模型：回退到默认模型，并把预算放大（推理模型吃 token）
@@ -105,11 +133,12 @@ def chat(
                 usage = data.get("usage") or {}
                 reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
                 if finish == "length":
-                    raise RuntimeError(
+                    raise EmptyContentError(
                         f"模型正文为空：max_tokens={max_tokens} 被推理过程吃光"
-                        f"（reasoning_tokens={reasoning}）。请调大 max_tokens，或换非推理模型。"
+                        f"（reasoning_tokens={reasoning}）。"
+                        f"已自动放大预算重试；仍失败请调大 QA_GEN_MAX_TOKENS 或精简提示词。"
                     )
-                raise RuntimeError(f"模型返回空内容（finish_reason={finish}）")
+                raise EmptyContentError(f"模型返回空内容（finish_reason={finish}）")
             return content
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "ignore")[:200]
