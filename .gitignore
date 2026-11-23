@@ -16,3 +16,7 @@ evals/generated/
 # 涓存椂
 .tmp/
 .pylibs/
+
+# 外部语料与检索索引（语料有版权，索引可重建）
+corpus_external/
+.index/
