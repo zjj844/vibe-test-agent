@@ -14,7 +14,31 @@
  */
 const { createApp } = Vue;
 
-createApp({
+// ---------------------------------------------------------------------------
+// 出错不许黑屏
+// ---------------------------------------------------------------------------
+// 实测踩过：模板里引用了一个 data 里不存在的字段，Vue 渲染时抛错，
+// **整个页面直接白屏**，而且控制台在折叠面板里，用户只会说"黑屏了"。
+// 所以这里挂一个兜底：任何渲染/运行时错误都画成一条红色横幅，
+// 把错误消息露在页面上 —— 出问题要看得见，而不是变成"打不开"。
+function showFatal(message) {
+  let bar = document.getElementById("fatal-bar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "fatal-bar";
+    bar.style.cssText =
+      "position:fixed;left:0;right:0;bottom:0;z-index:9999;padding:10px 16px;" +
+      "background:#5c2626;color:#ffd9d9;font:12.5px/1.6 monospace;border-top:1px solid #f87171;" +
+      "max-height:40vh;overflow:auto;white-space:pre-wrap";
+    document.body.appendChild(bar);
+  }
+  bar.textContent = "界面出错（已捕获，不是白屏）：\n" + message;
+}
+
+window.addEventListener("error", (event) => showFatal(String(event.message || event.error)));
+window.addEventListener("unhandledrejection", (event) => showFatal(String(event.reason)));
+
+const app = createApp({
   data() {
     return {
       targets: [],
@@ -57,6 +81,10 @@ createApp({
       return this.imp.contract && Array.isArray(this.imp.contract.endpoints)
         ? this.imp.contract.endpoints
         : [];
+    },
+    /** 该项目已有的需求文档（模板里直接读 reqFiles，别让模板自己去猜路径） */
+    reqFiles() {
+      return Array.isArray(this.imp.reqFiles) ? this.imp.reqFiles : [];
     },
   },
 
@@ -331,4 +359,11 @@ createApp({
       }[status] || status;
     },
   },
-}).mount("#app");
+});
+
+// 渲染期错误也要落到底部横幅上（否则 Expander 一折叠就没人看得到）
+app.config.errorHandler = (err, _instance, info) => {
+  showFatal(`${err && err.stack ? err.stack : err}\n（位置：${info}）`);
+};
+
+app.mount("#app");
