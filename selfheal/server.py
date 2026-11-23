@@ -60,6 +60,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REPORT_DIR = ROOT / "reports"
 WEB_DIR = ROOT / "web"
 CONFIG_DIR = ROOT / "selfheal" / "configs"
+REQ_DIR = ROOT / "selfheal" / "requirements_docs"
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -384,6 +385,119 @@ def save_contract(payload: dict) -> dict:
     return {"ok": True, "name": path.stem, "path": str(path)}
 
 
+# ---------------------------------------------------------------------------
+# 需求文档：读 / 粘贴保存
+# ---------------------------------------------------------------------------
+# 为什么需要这个接口：之前需求文档只能人工放到 requirements_docs/<项目>/ 里，
+# 是整个流程里唯一必须"离开界面去开文件夹"的一步。粘贴保存把这一步收回界面，
+# 顺带自动给契约补上 requirements_dir（否则工具仍会去检索默认目录 → 喂错语料）。
+_REQ_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$")
+_REQ_BAD_CHARS = set('/\\:*?"<>|')
+
+
+def _count_sections(text: str) -> int:
+    """数 `## ` 开头的行（第一行也可能就是 ##，用正则算行首更准）。"""
+    return sum(1 for line in text.splitlines() if line.startswith("## "))
+
+
+def _safe_req_filename(filename: str) -> str:
+    """校验需求文档文件名：允许中文，但必须是纯文件名（不许带路径）。"""
+    name = filename.strip()
+    if not name or name in (".", ".."):
+        raise ValueError("文件名不能为空")
+    if any(ch in _REQ_BAD_CHARS for ch in name):
+        raise ValueError("文件名不能包含路径分隔符或特殊字符")
+    if len(name) > 80:
+        raise ValueError("文件名过长（>80 字符）")
+    return name
+
+
+def list_requirements(target: str) -> list[dict]:
+    """列出某个被测项目已有的需求文档。"""
+    target_dir = Path(REQ_DIR) / _safe_target(target)
+    if not target_dir.is_dir():
+        return []
+    out: list[dict] = []
+    for path in sorted(target_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        out.append(
+            {
+                "name": path.name,
+                "size": path.stat().st_size,
+                "sections": _count_sections(text),
+                "chars": len(text),
+            }
+        )
+    return out
+
+
+def _safe_target(target: str) -> str:
+    name = (target or "").strip()
+    if not re.match(r"^[a-z0-9][a-z0-9-]{0,40}$", name):
+        raise ValueError("项目名只能用 小写字母/数字/连字符，且以字母或数字开头")
+    return name
+
+
+def save_requirements(payload: dict) -> dict:
+    """把粘贴进来的需求文本存成 <target>/REQ-xxx.md，并给契约补上 requirements_dir。"""
+    target = _safe_target(str(payload.get("target") or ""))
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        return {"ok": False, "error": "需求内容不能为空"}
+    if len(text) > 200_000:
+        return {"ok": False, "error": "需求内容过长（>20 万字符）"}
+
+    filename = str(payload.get("filename") or "").strip()
+    target_dir = Path(REQ_DIR) / target
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if filename:
+        try:
+            filename = _safe_req_filename(filename)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        if not filename.endswith(".md"):
+            filename += ".md"
+    else:
+        # 自动编号：REQ-001-需求.md / REQ-002-... （不覆盖已有文档）
+        existing = sorted(target_dir.glob("*.md"))
+        filename = f"REQ-{len(existing) + 1:03d}-需求.md"
+
+    path = target_dir / filename
+    if path.exists() and not payload.get("force"):
+        return {"ok": False, "error": f"已存在同名文档：{filename}", "exists": True}
+
+    path.write_text(text.rstrip() + "\n", encoding="utf-8")
+
+    # 顺手把 requirements_dir 写进契约（否则检索仍会走默认目录）
+    contract_note = "契约不存在，未更新"
+    contract_path = Path(CONFIG_DIR) / f"{target}.json"
+    if contract_path.is_file():
+        try:
+            data = json.loads(contract_path.read_text(encoding="utf-8-sig"))
+            want = f"selfheal/requirements_docs/{target}"
+            if data.get("requirements_dir") != want:
+                data["requirements_dir"] = want
+                contract_path.write_text(
+                    json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                )
+                contract_note = f"已给 {target}.json 补上 requirements_dir"
+            else:
+                contract_note = "契约已指向该目录"
+        except (OSError, ValueError) as exc:
+            contract_note = f"契约更新失败：{exc}"
+
+    return {
+        "ok": True,
+        "target": target,
+        "file": filename,
+        "path": str(path),
+        "chars": len(text),
+        "sections": _count_sections(text),
+        "contract": contract_note,
+    }
+
+
 
 # ---------------------------------------------------------------------------
 # 后台运行一次循环（前端点按钮触发）
@@ -506,6 +620,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/contract":
                 name = (query.get("name") or [""])[0]
                 return self._json(load_contract(name))
+            if path == "/api/requirements":
+                target = (query.get("target") or [""])[0]
+                return self._json({"target": target, "files": list_requirements(target)})
             if path == "/api/run/status":
                 return self._json(run_state())
             return self._json({"error": f"没有这个接口：{path}"}, 404)
@@ -519,7 +636,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:              # noqa: N802
         parsed = urlparse(self.path)
         route = parsed.path
-        if route not in ("/api/run", "/api/contract/draft", "/api/contract/save"):
+        if route not in ("/api/run", "/api/contract/draft", "/api/contract/save",
+                         "/api/requirements/save"):
             return self._json({"error": "没有这个接口"}, 404)
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -534,6 +652,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/api/contract/save":
             result = save_contract(payload)
+            return self._json(result, 200 if result.get("ok") else 400)
+
+        if route == "/api/requirements/save":
+            try:
+                result = save_requirements(payload)
+            except ValueError as exc:
+                return self._json({"ok": False, "error": str(exc)}, 400)
             return self._json(result, 200 if result.get("ok") else 400)
 
         result = start_run(

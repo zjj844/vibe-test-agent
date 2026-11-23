@@ -33,6 +33,11 @@ createApp({
         force: false,
         message: "",
         error: "",
+        reqText: "",
+        reqFile: "",
+        reqBusy: false,
+        reqMsg: "",
+        reqFiles: [],
       },
       runState: { status: "idle", target: "", steps: [], message: "", started_at: "", finished_at: "" },
       pollTimer: null,
@@ -55,12 +60,18 @@ createApp({
     },
   },
 
+  watch: {
+    /** 切换项目名时，顺手把该项目已有的需求文档列出来 */
+    "imp.name"(value) {
+      this.loadRequirements(value);
+    },
+  },
+
   mounted() {
     this.loadTargets();
     this.loadReports();
     this.pollStatus();          // 页面一打开就同步一次（可能后台正在跑）
   },
-
   beforeUnmount() {
     if (this.pollTimer) clearInterval(this.pollTimer);
   },
@@ -192,6 +203,51 @@ createApp({
         expect_fields: [],
         notes: "",
       });
+    },
+
+    // ---------------- 需求文档：列表 + 粘贴保存 ----------------
+    async loadRequirements(target) {
+      if (!target) { this.imp.reqFiles = []; return; }
+      try {
+        const data = await this.getJSON(
+          "/api/requirements?target=" + encodeURIComponent(target)
+        );
+        this.imp.reqFiles = data.files || [];
+      } catch (e) {
+        this.imp.reqFiles = [];
+      }
+    },
+
+    async saveRequirements() {
+      this.imp.reqBusy = true;
+      this.imp.reqMsg = "";
+      this.imp.error = "";
+      try {
+        const resp = await fetch("/api/requirements/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target: this.imp.name,
+            text: this.imp.reqText,
+            filename: this.imp.reqFile,
+            force: this.imp.force,
+          }),
+        });
+        const data = await resp.json();
+        if (!data.ok) {
+          this.imp.error = data.error || "保存需求失败";
+          return;
+        }
+        this.imp.reqMsg =
+          `已保存 ${data.file}（${data.sections} 节）；${data.contract}`;
+        this.imp.reqText = "";
+        this.imp.reqFile = "";
+        await this.loadRequirements(this.imp.name);
+      } catch (e) {
+        this.imp.error = "保存需求请求失败：" + e.message;
+      } finally {
+        this.imp.reqBusy = false;
+      }
     },
 
     async saveContract() {

@@ -115,6 +115,30 @@ button.ghost.tiny { padding: 1px 8px; font-size: 11px; }
 }
 .draft-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
 
+/* ---------------- 需求文档粘贴区 ---------------- */
+.req-block { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.req-block textarea {
+  width: 100%;
+  background: #0b0e13;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.req-block .req-name {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  min-width: 220px;
+}
+
 /* ---------------- 进度条 ---------------- */
 .progress {
   margin: 16px 24px 0;

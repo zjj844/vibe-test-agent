@@ -116,6 +116,31 @@
           </button>
         </div>
       </div>
+
+      <!-- 需求文档：粘贴保存（没有它，"该测什么"只能靠契约 notes，覆盖会变浅） -->
+      <div class="req-block">
+        <div class="draft-head">
+          <strong>需求文档（可选，但强烈建议）</strong>
+          <span class="muted small">
+            用 <code>## FR-1 xxx</code> 分节写 —— 分节标题就是检索切块的依据
+          </span>
+        </div>
+        <textarea v-model="imp.reqText" rows="6"
+                  placeholder="## FR-1 商品列表&#10;GET /api/items 返回 data 数组；空时必须为 []，不得为 null。&#10;&#10;## FR-2 订单不存在返回 404&#10;订单查不到时返回 code=404，不得 500。"></textarea>
+        <div class="draft-actions">
+          <input class="req-name" v-model.trim="imp.reqFile" placeholder="文件名（留空自动编号）" />
+          <button class="run" @click="saveRequirements"
+                  :disabled="imp.reqBusy || !imp.name || !imp.reqText.trim()">
+            {{ imp.reqBusy ? '保存中…' : '保存需求文档' }}
+          </button>
+          <span v-if="imp.reqMsg" class="muted small">{{ imp.reqMsg }}</span>
+        </div>
+        <p class="muted small">
+          {{ reqFiles.length
+             ? '已有文档：' + reqFiles.map(f => f.name + '（' + f.sections + ' 节）').join('、')
+             : '该项目还没有需求文档' }}
+        </p>
+      </div>
     </section>
 
     <!-- ================= 运行进度 ================= -->
