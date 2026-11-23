@@ -18,7 +18,7 @@
 
 ```bash
 pip install -r requirements.txt        # 只有 requests + pytest 两个依赖
-python -m pytest -q                    # 127 条离线测试（模型用替身，不联网）
+python -m pytest -q                    # 220 条离线测试（模型用替身，不联网）
 python scripts/check_contracts.py      # 契约自检
 # 也可以直接看现成的真机报告：docs/samples/REPORT-demo-buggy-defect.md
 ```
@@ -38,7 +38,12 @@ python -m selfheal.loop --target demo-buggy --n 3 --rounds 2   # 终端 2
 > `advisor`（仅规则判不了时给建议）。探活、检索、静态校验、执行、分流、决策、报告**全是确定性代码**。
 > 服务不可达时一次模型都不调（2 秒内停手）。没有 key 也不会偷偷用假模型充数 —— 会直接报错。
 
-想测自己的项目？复制 `selfheal/configs/rag-backend.json` 改一改，**不需要改任何代码**。
+想测自己的项目？**按 `docs/09-新项目接入指南.md` 走**（6 步 + 三个必踩的坑）：
+报告台点「＋ 导入新项目」→ 选 Controller → AI 起草契约 → 看体检警告 →
+收窄到 6~10 个接口 → 粘 PRD → 跑。**不需要改任何代码。**
+
+> 一条经验：`--n` 要和契约规模匹配。契约 8 个接口就 `--n 8`（基本全覆盖）；
+> 契约塞 100 个接口却只跑 3 条用例，等于随机抓 3 个测，覆盖会被摊薄。
 
 要求：**Python ≥ 3.10**（CI 在 3.10 / 3.13 上各跑一遍）。本地自检：`check.cmd`。
 
@@ -254,11 +259,12 @@ python -m selfheal.targets --target java-cms
 
 | # | 决策 | 为什么 |
 |---|---|---|
-| 1 | **失败分 5 类**：服务不可达 / 系统 Bug / 脚本问题 / 断言问题 / 生成代码问题 | 自愈的第一条规则不是"怎么修"，而是"**哪些不许修**"。把真 Bug 改成"通过"比漏测更危险 |
-| 2 | **分流用规则，不用模型** | 规则的判断可复现、可审计、可写单测；模型的判断做不到 |
+| 1 | **失败分 6 类**：服务不可达 / 系统 Bug / 契约与实现不一致 / 生成代码问题 / 断言问题 / 脚本问题 | 自愈的第一条规则不是"怎么修"，而是"**哪些不许修**"。把真 Bug 改成"通过"比漏测更危险 |
+| 2 | **分流用规则，不用模型** | 规则的判断可复现、可审计、可写单测；模型的判断做不到（模型只在规则判不了时给"建议"，无动作权限） |
 | 3 | **改前快照 + 一键回滚** | 让 AI 改代码必须有后悔药，否则最坏情况是"改坏了但不知道坏了什么" |
 | 4 | **自愈上限 2 轮** | 收益递减 + 成本翻倍 + 轮数越多模型越倾向"把断言改弱以求通过" |
 | 5 | **自评 2 次取中位** | 单次打分有抖动、不可比较；多次采样让分数可复现 |
+| 6 | **检索给外部规范留配额** | 实测：把 157 块组织规范混进去后，纯排序它永远进不了 Top-3 → 显式留 1 个名额 |
 
 ---
 
@@ -267,29 +273,31 @@ python -m selfheal.targets --target java-cms
 ```
 selfheal/
 ├── targets.py       契约读取 + 探活         ✅
-├── http.py          发请求（不抛异常）      ✅
-├── kb.py            需求知识库（层级分块+检索）✅
+├── http.py          发请求（不抛异常、自动注入登录态）✅
+├── kb.py            需求+规范知识库（层级分块 / hybrid 检索 / 配额）✅
+├── vectordb.py      SQLite 持久化向量索引 + BM25 + RRF 混合 ✅
 ├── critic.py        用例自评（rubric+中位）  ✅
-├── retrieval/       精简检索组件（从 RAG 项目移植）
+├── retrieval/       精简检索组件（chunking / embedding / store / retriever）
 ├── configs/         被测项目契约（一个项目一个 json）
-├── requirements_docs/ 需求文档（RAG 检索的语料）
+├── requirements_docs/ 需求文档（按项目分目录）
 ├── generator.py     用例生成（模板头+四道校验+有界重试）✅
+├── bootstrap.py     AI 读源码起草契约 + 契约体检     ✅
 ├── runner.py        执行 + 解析 junitxml    ✅
 ├── triage.py        失败分流（6 类 → 6 动作）✅
-├── advisor.py       AI 辅助归因（规则判不了才出场）✅
+├── advisor.py       AI 辅助归因（规则判不了才出场，无动作权限）✅
 ├── snapshot.py      快照 / 回滚点            ✅
 ├── loop.py          主循环（有界自愈）       ✅
 ├── report.py        Markdown 报告           ✅
 └── server.py        本地报告台（stdlib HTTP）✅
-web/
-├── index.html       报告台页面（Vue 3 零构建）
-├── app.js           前端逻辑（选项式 API）
-├── style.css        样式（单文件，无预处理器）
-└── vendor/          vue.global.prod.js（本地化，免 npm）
+web/                 报告台前端（Vue 3 零构建：历史报告 / 报告详情 / 导入项目 / 粘贴需求 / 运行）
+corpus_external/     外部规范语料（17 篇 / 157 块，gitignore，脚本可重建）
+.index/              SQLite 索引（gitignore，可重建）
 demo/
 └── buggy_service.py 故意带 Bug 的示例服务（两种坏法，用于复现缺陷报告）
 scripts/
-└── check_contracts.py 契约自检（CI 与 check.cmd 共用）
+├── check_contracts.py        契约自检（CI 与 check.cmd 共用）
+├── fetch_external_corpus.py  抓外部规范语料（jsDelivr CDN，短超时）
+└── eval_retrieval.py         检索评测（recall@3 / MRR → docs/07）
 .github/workflows/ci.yml  CI：py3.10 / 3.13 双版本跑离线测试
 docs/
 ├── 00-零基础入门.md   ← 先读这个
@@ -301,8 +309,9 @@ docs/
 ├── 06-面试问题预测.md   ← 38 题 + 5 个陷阱 + 10 分钟自检
 ├── 07-检索评测.md       ← 外部规范语料的 recall@3 / MRR 实测数字
 ├── 08-优化方案.md       ← 已知缺口与补法（面试问"还缺什么"直接用）
+├── 09-新项目接入指南.md  ← 6 步接入 + 三个必踩的坑 + 失败归因判断表
 └── samples/          样例报告（GitHub 上不跑也能看到输出长什么样）
-tests/                离线测试 + 手工基线（206 passed）
+tests/                离线测试 + 手工基线（220 passed）
 ```
 
 ---
